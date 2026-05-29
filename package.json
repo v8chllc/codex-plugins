@@ -1,0 +1,27 @@
+{
+  "name": "codex-plugins",
+  "version": "1.0.1",
+  "description": "Plugin marketplace assets for Codex CLI.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "lint:md": "markdownlint \"**/*.md\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/v8chllc/codex-plugins.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/v8chllc/codex-plugins/issues"
+  },
+  "homepage": "https://github.com/v8chllc/codex-plugins#readme",
+  "devDependencies": {
+    "markdownlint-cli": "^0.48.0"
+  }
+}
