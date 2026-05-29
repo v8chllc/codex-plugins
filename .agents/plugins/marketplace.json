@@ -1,0 +1,20 @@
+{
+  "name": "v8ch",
+  "interface": {
+    "displayName": "Codex Plugins by V8CH"
+  },
+  "plugins": [
+    {
+      "name": "v8ch",
+      "source": {
+        "source": "local",
+        "path": "./plugins/v8ch"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

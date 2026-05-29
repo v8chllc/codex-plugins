@@ -1,0 +1,38 @@
+{
+  "name": "v8ch",
+  "version": "1.0.1",
+  "description": "Reusable Codex CLI workflows for AI-assisted code review.",
+  "author": {
+    "name": "V8CH LLC",
+    "url": "https://github.com/v8chllc"
+  },
+  "homepage": "https://github.com/v8chllc/codex-plugins",
+  "repository": "https://github.com/v8chllc/codex-plugins",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "code-review",
+    "skills",
+    "developer-tools"
+  ],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "interface": {
+    "displayName": "V8CH Codex Workflows",
+    "shortDescription": "Code review workflows for Codex CLI.",
+    "longDescription": "Reusable Codex CLI skills and agents for consensus code review and reviewer-agent generation.",
+    "developerName": "V8CH LLC",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Review"
+    ],
+    "websiteURL": "https://github.com/v8chllc/codex-plugins",
+    "defaultPrompt": [
+      "Run a consensus review on my current changes.",
+      "Generate workspace-specific reviewer agents."
+    ],
+    "brandColor": "#10A37F"
+  }
+}
