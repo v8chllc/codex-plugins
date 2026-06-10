@@ -1,7 +1,7 @@
 {
   "name": "v8ch",
-  "version": "1.0.1",
-  "description": "Reusable Codex CLI workflows for AI-assisted code review.",
+  "version": "1.0.2",
+  "description": "Reusable Codex CLI workflows for AI-assisted code review and project memory.",
   "author": {
     "name": "V8CH LLC",
     "url": "https://github.com/v8chllc"
@@ -12,6 +12,7 @@
   "keywords": [
     "codex",
     "code-review",
+    "memory",
     "skills",
     "developer-tools"
   ],
@@ -19,8 +20,8 @@
   "agents": "./agents/",
   "interface": {
     "displayName": "V8CH Codex Workflows",
-    "shortDescription": "Code review workflows for Codex CLI.",
-    "longDescription": "Reusable Codex CLI skills and agents for consensus code review and reviewer-agent generation.",
+    "shortDescription": "Code review and memory workflows for Codex CLI.",
+    "longDescription": "Reusable Codex CLI skills and agents for consensus code review, reviewer-agent generation, and project memory workflows.",
     "developerName": "V8CH LLC",
     "category": "Developer Tools",
     "capabilities": [
@@ -31,7 +32,8 @@
     "websiteURL": "https://github.com/v8chllc/codex-plugins",
     "defaultPrompt": [
       "Run a consensus review on my current changes.",
-      "Generate workspace-specific reviewer agents."
+      "Generate workspace-specific reviewer agents.",
+      "Load project memory."
     ],
     "brandColor": "#10A37F"
   }
