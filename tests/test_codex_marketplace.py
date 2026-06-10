@@ -37,7 +37,7 @@ def test_marketplace_points_to_valid_plugin_manifest() -> None:
 
     manifest = load_json(plugin_root / ".codex-plugin/plugin.json")
     assert manifest["name"] == entry["name"]
-    assert manifest["version"] == "1.0.1"
+    assert manifest["version"] == "1.0.2"
     assert manifest["description"]
 
 
@@ -61,6 +61,8 @@ def test_all_plugin_skills_have_metadata() -> None:
     assert {path.parent.name for path in skill_files} == {
         "consensus-review",
         "meta-consensus-review-agents",
+        "recommend",
+        "remember",
     }
 
     for skill_file in skill_files:
@@ -91,3 +93,16 @@ def test_plugin_agents_are_valid_codex_toml() -> None:
         assert data["model_reasoning_effort"] in {"low", "medium", "high"}
         assert data["sandbox_mode"] in {"read-only", "workspace-write"}
         assert data["developer_instructions"]
+
+
+def test_remember_skill_uses_manual_load_and_explicit_setup() -> None:
+    skill_dir = REPO_ROOT / "plugins" / "v8ch" / "skills" / "remember"
+    skill_text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "Workflow A: Manual Load / Status" in skill_text
+    assert "Workflow B: Setup" in skill_text
+    assert "`$remember setup`" in skill_text
+    assert "Do not create files." in skill_text
+    assert "do not inject a memory-load directive" in skill_text
+    assert "exactly matches the reference content" in skill_text
+    assert "Inject `references/agents-md-directive.md`" not in skill_text
