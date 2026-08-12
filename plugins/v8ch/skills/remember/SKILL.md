@@ -5,13 +5,14 @@ description: "Load existing project memory, set up memory storage, record struct
 
 # Remember Skill
 
-Manages three memory lanes for the current working directory:
+Manages four memory lanes for the current working directory:
 
 1. **Daily Journal** — episodic session notes in `.remember/memory/YYYY-MM-DD.md`
 2. **Curated Memory** — durable structured entries in `.remember/MEMORY.md`
 3. **Procedural Memory** — behavior-changing guidance in approved agent-facing targets
-4. **Turn Journal** — opt-in, immutable Stop-hook records in
-   `.remember/turns/codex/`, used to preserve work across `/clear`
+4. **Lifecycle Journal** — independently opt-in, immutable Stop and SessionEnd
+   records in `.remember/turns/codex/`, used to preserve work across `/clear`
+   and terminal session shutdown
 
 See `references/types.md` for curated memory type templates and examples.
 See `references/agents-md-directive.md` for the legacy generated directive block
@@ -41,10 +42,13 @@ reporting, and setup-aware Memory Fast-Track steering checks.
 - `$remember session`
 - Natural language: "capture this session", "write to journal"
 
-**Stop capture:**
-- `$remember hook enable`
-- `$remember hook disable`
-- `$remember hook status`
+**Lifecycle capture:**
+- `$remember hook enable stop-capture`
+- `$remember hook disable stop-capture`
+- `$remember hook status stop-capture`
+- `$remember hook enable session-end-capture`
+- `$remember hook disable session-end-capture`
+- `$remember hook status session-end-capture`
 - `$remember clean [--apply]`
 
 **Recommend:** use the `recommend` skill (`/recommend session`, `/recommend curated`, `/recommend procedural`).
@@ -194,45 +198,70 @@ Triggered by "Remember that `<text>`" with no explicit type keyword.
 
 Triggered by `$remember session` or natural language journal phrases.
 
+**Outcome:** append one concise, deduplicated daily journal entry from all valid
+unsummarized lifecycle records.
+
+**Inputs:** version 1 Stop segments, version 2 Stop segments, version 2
+SessionEnd segments, and the available current context when no segments exist.
+
+**Constraints:** preserve chronological order, use only evidence present in the
+selected records or an available SessionEnd transcript, and do not promote
+curated or procedural memory during synthesis.
+
+**Output:** the daily journal path, source segment count, and whether the write
+was new or deduplicated.
+
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first and stop.
-2. Read the Codex turn-segment markers in descending `captured_at` order until
+2. Read the Codex lifecycle-segment markers in descending `captured_at` order until
    the newest `summarized_at` checkpoint, then include every eligible
    unsummarized segment. This makes work from a prior context survive `/clear`.
    If no segments exist, fall back to the available current context.
-3. Synthesize a concise journal entry from the selected records, ordered
+3. For each SessionEnd segment, read its `transcript_path` only when the file is
+   still available. Treat the transcript format as unstable input and extract
+   only the context needed for the journal. If it is unavailable, retain the
+   SessionEnd metadata without inventing missing content.
+4. Synthesize a concise journal entry from the selected records, ordered
    chronologically. Include what happened, key context, decisions, blockers,
    next steps, and references only when present.
-4. Write the daily journal entry using the combined turn keys as `session_hash`.
+5. Write the daily journal entry using the combined segment keys as `session_hash`.
    Before writing, scan every dated daily journal for that hash; do not append a
    duplicate entry.
-5. Only after the daily journal write succeeds, mark each source segment with
+6. Only after the daily journal write succeeds, mark each source segment with
    `summarized_at` and `summary_path`:
    `python plugins/v8ch/skills/remember/scripts/turn_journal.py mark-summarized --root . --summary-path .remember/memory/YYYY-MM-DD.md`.
    Never mark records when synthesis or its journal write failed.
-6. Confirm the summary path and source segment count. Do not delete segments
+7. Confirm the summary path and source segment count. Do not delete segments
    automatically.
 
-## Workflow F: Stop Capture and Cleanup
+## Workflow F: Lifecycle Capture and Cleanup
 
-The bundled Stop hook is registered with the plugin but is inert until enabled.
-It records only completed main-agent turns, exits quietly, and never produces
-recommendations or blocks Codex. Codex requires the user to trust plugin hooks;
-ask the user to verify that trust with `/hooks` before enabling capture.
+The plugin bundles independent `Stop` and `SessionEnd` hooks. Both are inert
+until their project-local channel is enabled. Stop records a completed
+main-agent response. SessionEnd records the terminal event and transcript path;
+it does not copy the Stop message into a second segment. Both hooks exit
+quietly, fail open, and never produce recommendations or steer Codex.
 
-### `$remember hook enable`
+Codex requires the user to trust plugin hooks. Ask the user to verify the
+current definitions with `/hooks` before enabling either channel.
+
+### `$remember hook enable <channel>`
 
 1. Guard on initialized memory; do not initialize it implicitly.
-2. Explain the capture scope and ask the user to confirm hook trust if it has
+2. Require exactly one channel: `stop-capture` or `session-end-capture`.
+3. Explain that channel's scope and ask the user to confirm hook trust if it has
    not already been confirmed.
-3. Run `python plugins/v8ch/skills/remember/scripts/turn_journal.py enable --root .`.
-4. Report that future stopped turns will create immutable project-local records.
+4. Run `python plugins/v8ch/skills/remember/scripts/turn_journal.py enable <channel> --root .`.
+5. Report the enabled channel and its immutable project-local segment behavior.
+   Do not claim the other channel changed.
 
-### `$remember hook disable` and `$remember hook status`
+### `$remember hook disable <channel>` and `$remember hook status <channel>`
 
-Run the corresponding helper command with `--root .`. Status reports whether
-capture is enabled and the count of summarized and unsummarized segments; it
-does not claim that hook trust is active without the user's `/hooks` evidence.
+Require one supported channel, then run the corresponding helper command with
+the channel and `--root .`. Disabling one channel must preserve the other
+channel's state. Status reports that channel's enabled state and its summarized
+and unsummarized segment counts. It does not claim that hook trust is active
+without the user's `/hooks` evidence.
 
 ### `$remember clean [--apply]`
 
@@ -360,7 +389,8 @@ remember", or "validate memory".
 2. Validation checks `.remember/MEMORY.md` for required type sections, known
    entry markers, required fields, and duplicate active `context` entries.
 3. Validation checks `.remember/memory/YYYY-MM-DD.md` journal filenames and
-   `remember-journal` metadata blocks, plus valid Stop-turn segment markers.
+   `remember-journal` metadata blocks, plus valid Stop and SessionEnd lifecycle
+   segment markers.
 4. Validation reports issues without mutating files by default. Only append
    generated Memory Fast-Track steering after explicit user approval with
    `--apply-fast-track`.
@@ -377,8 +407,13 @@ remember", or "validate memory".
 - **`AGENTS.md` absent**: do not create it during setup.
 - **No durable curated recommendations**: say no memory-worthy updates were found; do not modify files.
 - **Procedural candidate with no approved target**: surface as unsupported; present to the user as a manual decision rather than writing elsewhere.
-- **Stop hook payload lacks a session or turn ID**: skip capture quietly. Do not
-  infer an ID or write an unsafe record.
+- **Stop payload lacks a session ID, turn ID, or final message**: skip capture
+  quietly. Do not infer missing values or write a partial record.
+- **SessionEnd payload lacks a session ID, transcript path, or reason**: skip
+  capture quietly. Do not register a substitute event or write a partial record.
+- **Legacy Stop state**: preserve `.remember/stop-capture.json` as the Stop
+  channel preference. Treat a missing `.remember/session-end-capture.json` as
+  disabled.
 
 ---
 

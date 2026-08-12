@@ -176,6 +176,73 @@ kind: note
     assert "journal_kind_invalid" in codes
 
 
+def test_valid_stop_and_session_end_segments_pass(tmp_path: Path) -> None:
+    write_valid_memory(tmp_path)
+    segment_dir = tmp_path / ".remember" / "turns" / "codex"
+    segment_dir.mkdir(parents=True)
+    (segment_dir / "stop.md").write_text(
+        """<!-- remember-turn
+version: 2
+platform: codex
+channel: stop-capture
+event: Stop
+session_id: session-1
+turn_id: turn-1
+segment_key: stop-key
+captured_at: 2026-08-12T12:00:00Z
+-->
+""",
+        encoding="utf-8",
+    )
+    (segment_dir / "session-end.md").write_text(
+        """<!-- remember-turn
+version: 2
+platform: codex
+channel: session-end-capture
+event: SessionEnd
+session_id: session-1
+transcript_path: /tmp/session-1.jsonl
+reason: other
+segment_key: session-end-key
+captured_at: 2026-08-12T12:01:00Z
+-->
+""",
+        encoding="utf-8",
+    )
+
+    result = run_validate(tmp_path, "--json")
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["issues"] == []
+
+
+def test_invalid_lifecycle_segment_channel_is_reported(tmp_path: Path) -> None:
+    write_valid_memory(tmp_path)
+    segment_dir = tmp_path / ".remember" / "turns" / "codex"
+    segment_dir.mkdir(parents=True)
+    (segment_dir / "invalid.md").write_text(
+        """<!-- remember-turn
+version: 2
+platform: codex
+channel: stop-capture
+event: SessionEnd
+session_id: session-1
+transcript_path: /tmp/session-1.jsonl
+reason: other
+segment_key: invalid-key
+captured_at: 2026-08-12T12:01:00Z
+-->
+""",
+        encoding="utf-8",
+    )
+
+    result = run_validate(tmp_path, "--json")
+
+    assert result.returncode == 1
+    codes = {issue["code"] for issue in json.loads(result.stdout)["issues"]}
+    assert "turn_segment_channel_invalid" in codes
+
+
 def test_steering_detection_and_application(tmp_path: Path) -> None:
     write_valid_memory(tmp_path)
     steering_path = tmp_path / STEERING_FILE

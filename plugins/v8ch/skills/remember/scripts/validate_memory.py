@@ -248,14 +248,17 @@ def validate_turn_segments(root: Path, issues: list[Issue]) -> None:
             )
             continue
         fields = parse_fields(match.group("body"))
-        for required in (
-            "version",
-            "platform",
-            "session_id",
-            "turn_id",
-            "turn_key",
-            "captured_at",
-        ):
+        version = fields.get("version")
+        required_fields = ["version", "platform", "session_id", "captured_at"]
+        if version == "1":
+            required_fields.extend(("turn_id", "turn_key"))
+        else:
+            required_fields.extend(("channel", "event", "segment_key"))
+            if fields.get("event") == "Stop":
+                required_fields.append("turn_id")
+            elif fields.get("event") == "SessionEnd":
+                required_fields.extend(("transcript_path", "reason"))
+        for required in required_fields:
             if not fields.get(required):
                 add_issue(
                     issues,
@@ -265,6 +268,15 @@ def validate_turn_segments(root: Path, issues: list[Issue]) -> None:
                     f"remember-turn block is missing {required}.",
                     f"Add {required}: <value> to the marker.",
                 )
+        if version and version not in {"1", "2"}:
+            add_issue(
+                issues,
+                "error",
+                "turn_segment_version_invalid",
+                path,
+                "remember-turn version must be 1 or 2.",
+                "Use version 2 for new lifecycle-capture segments.",
+            )
         if fields.get("platform") and fields["platform"] != "codex":
             add_issue(
                 issues,
@@ -273,6 +285,31 @@ def validate_turn_segments(root: Path, issues: list[Issue]) -> None:
                 path,
                 "Codex turn-journal segment must declare platform: codex.",
                 "Set platform: codex in the marker.",
+            )
+        event = fields.get("event")
+        channel = fields.get("channel")
+        expected_channels = {
+            "Stop": "stop-capture",
+            "SessionEnd": "session-end-capture",
+        }
+        expected_channel = expected_channels.get(event or "")
+        if version == "2" and expected_channel is None:
+            add_issue(
+                issues,
+                "error",
+                "turn_segment_event_invalid",
+                path,
+                "Version 2 remember-turn event must be Stop or SessionEnd.",
+                "Set event to the lifecycle event that created the segment.",
+            )
+        elif version == "2" and channel != expected_channel:
+            add_issue(
+                issues,
+                "error",
+                "turn_segment_channel_invalid",
+                path,
+                f"{event} segments must use channel: {expected_channel}.",
+                "Set channel to the event's matching capture channel.",
             )
         has_stamp = bool(fields.get("summarized_at"))
         has_path = bool(fields.get("summary_path"))
