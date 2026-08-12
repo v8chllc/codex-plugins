@@ -26,9 +26,9 @@ Each session journal entry consists of two parts:
 
 ```md
 <!-- remember-journal
-source: stop-turn-synthesis
+source: lifecycle-synthesis
 kind: session
-session_hash: <hash of source turn keys>
+session_hash: <hash of source segment keys>
 captured_at: <ISO-8601>
 window_start: <ISO-8601>
 window_end: <ISO-8601>
@@ -39,7 +39,8 @@ Place the marker immediately before the session prose. The marker is an HTML
 comment and will not render in most Markdown viewers.
 
 Fields:
-- `source`: `manual` for `$remember session`
+- `source`: `lifecycle-synthesis` when lifecycle segments are selected; `manual`
+  when `$remember session` falls back to current context
 - `kind`: always `session` for session captures
 - `session_hash`: best-effort hash of the session window (see Dedupe below)
 - `captured_at`: ISO-8601 timestamp when the entry was written
@@ -82,7 +83,8 @@ with `$remember session`.
 
 ### Session hash
 
-Compute a deterministic `session_hash` from the sorted, selected Stop-turn keys.
+Compute a deterministic `session_hash` from the sorted, selected lifecycle
+segment keys.
 This is stable across a retry after `/clear`, and avoids relying on the current
 context window.
 
@@ -98,43 +100,74 @@ Before appending:
 4. If the computed hash matches an existing block: skip the write. Notify the
    user that this session was already captured.
 5. After successful write, set `summarized_at` and `summary_path` on every
-   source turn segment. Never set those fields before the journal exists.
+   source lifecycle segment. Never set those fields before the journal exists.
 
 ### Constraints
 
-- Dedupe is deterministic for an identical set of source turn segments.
+- Dedupe is deterministic for an identical set of source lifecycle segments.
 - Do not use semantic similarity for dedupe.
 - Do not introduce an external state store or database.
 - Keep metadata in HTML comments so the journal remains readable as plain Markdown.
 
 ---
 
-## Stop-turn segments
+## Lifecycle segments
 
-When explicitly enabled, the Codex `Stop` hook writes one immutable Markdown
-file per completed main-agent turn under:
+When explicitly enabled, the Codex `Stop` and `SessionEnd` hooks write immutable
+Markdown files under:
 
 ```
-.remember/turns/codex/<turn-key>.md
+.remember/turns/codex/<segment-key>.md
 ```
 
 Each file starts with this marker:
 
 ```md
 <!-- remember-turn
-version: 1
+version: 2
 platform: codex
+channel: <stop-capture | session-end-capture>
+event: <Stop | SessionEnd>
 session_id: <Codex session ID>
-turn_id: <Codex turn ID>
-turn_key: <opaque deterministic key>
+segment_key: <opaque deterministic key>
 captured_at: <ISO-8601>
 summarized_at: <ISO-8601, absent until summary succeeds>
 summary_path: <daily journal path, absent until summary succeeds>
 -->
 ```
 
-The hook uses `session_id + turn_id` for idempotency. `/clear` may replace the
-context while leaving earlier segment files intact, so `$remember session`
-selects unsummarized segments rather than trusting only the current session ID.
-`$remember clean` previews removal of older valid summarized checkpoints and
-requires `--apply`; it never removes unsummarized or malformed files.
+New segments use `version: 2`. Version 1 Stop segments remain valid for
+migration and use `turn_id` plus `turn_key` instead of the version 2 event,
+channel, and segment-key fields.
+
+### Stop fields
+
+Stop segments additionally contain:
+
+```md
+turn_id: <Codex turn ID>
+```
+
+The segment key hashes `session_id + Stop + turn_id`. Its prose body contains
+the final assistant message for that completed main-agent turn.
+
+### SessionEnd fields
+
+SessionEnd segments additionally contain:
+
+```md
+transcript_path: <Codex transcript path>
+reason: other
+```
+
+The segment key hashes `session_id + SessionEnd + reason`. The segment records
+the transcript reference rather than copying the final assistant message, so
+concurrent Stop and SessionEnd delivery does not duplicate response content.
+During synthesis, read the transcript only if it still exists. Codex documents
+the transcript format as unstable, so do not depend on a fixed JSONL schema.
+
+`/clear` may replace model context while leaving earlier segment files intact,
+so `$remember session` selects unsummarized segments rather than trusting only
+the current session ID. `$remember clean` previews removal of older valid
+summarized checkpoints and requires `--apply`; it never removes unsummarized or
+malformed files.
