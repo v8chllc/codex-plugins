@@ -10,9 +10,10 @@ Manages four memory lanes for the current working directory:
 1. **Daily Journal** — episodic session notes in `.remember/memory/YYYY-MM-DD.md`
 2. **Curated Memory** — durable structured entries in `.remember/MEMORY.md`
 3. **Procedural Memory** — behavior-changing guidance in approved agent-facing targets
-4. **Lifecycle Journal** — independently opt-in, immutable Stop and SessionEnd
-   records in `.remember/turns/codex/`, used to preserve work across `/clear`
-   and terminal session shutdown
+4. **Lifecycle Journal** — independently opt-in, immutable `version: 3` Stop
+   and SessionEnd records in the shared, flat store `.remember/turns/`, used to
+   preserve work across `/clear` and terminal session shutdown. Both Claude and
+   Codex write into this one store; each record carries its own `platform`.
 
 See `references/types.md` for curated memory type templates and examples.
 See `references/agents-md-directive.md` for the legacy generated directive block
@@ -204,8 +205,8 @@ before running a bundled helper.
 **Goal:** Append one concise, deduplicated daily journal entry from valid,
 unsummarized lifecycle records.
 
-**Inputs:** version 1 Stop segments, version 2 Stop segments, version 2
-SessionEnd segments, and the available current context when no segments exist.
+**Inputs:** every valid `version: 3` lifecycle segment in `.remember/turns/`
+from any `platform`, and the available current context when no segments exist.
 
 **Boundaries:** Preserve chronological order and ground the summary in selected
 records or an available SessionEnd transcript. Keep curated and procedural
@@ -216,11 +217,13 @@ was new or deduplicated.
 
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first and stop.
-2. Read the Codex lifecycle-segment markers in descending `captured_at` order until
-   the newest `summarized_at` checkpoint, then include every eligible
-   unsummarized segment. This makes work from a prior context survive `/clear`.
-   If no segments exist, fall back to the available current context.
-3. For each SessionEnd segment, read its `transcript_path` only when the file is
+2. List unsummarized segments with
+   `python "<remember-skill-dir>/scripts/turn_journal.py" unsummarized --root .`,
+   which returns every valid v3 record from both platforms ascending by
+   `captured_at`. This makes work from a prior context survive `/clear`. Legacy
+   or malformed files in the store are skipped, never repaired. If no segments
+   exist, fall back to the available current context.
+3. For each `session-end` segment, read its `transcript_path` only when the file is
    still available. Treat the transcript format as unstable input and extract
    only terminal context not already present in selected Stop segments. Use Stop
    as the response-text source when the transcript overlaps it. If the
@@ -229,15 +232,17 @@ was new or deduplicated.
 4. Synthesize a concise journal entry from the selected records, ordered
    chronologically. Include available work, context, decisions, blockers, next
    steps, and references.
-5. Write the daily journal entry using the combined segment keys as `session_hash`.
-   Before writing, scan every dated daily journal for that hash and reuse a
-   matching entry.
+5. Write **one** daily journal entry covering every selected segment, using the
+   combined segment keys across all platforms as a single `session_hash`. Never
+   write one entry per platform. Before writing, scan every dated daily journal
+   for that hash and reuse a matching entry.
 6. Only after the daily journal write succeeds, mark each source segment with
    `summarized_at` and `summary_path`:
    `python "<remember-skill-dir>/scripts/turn_journal.py" mark-summarized --root . --summary-path .remember/memory/YYYY-MM-DD.md`.
-   Keep source markers unchanged when synthesis or its journal write fails.
-7. Confirm the summary path and source segment count. Leave segment cleanup to
-   `$remember clean`.
+   Keep source records unchanged when synthesis or its journal write fails; no
+   segment is modified until the journal write succeeds.
+7. Confirm the summary path and the source segment count per platform. Leave
+   segment cleanup to `$remember clean`.
 
 ## Workflow F: Lifecycle Capture and Cleanup
 
@@ -245,8 +250,10 @@ was new or deduplicated.
 preview-first cleanup.
 
 **Context:** The packaged hooks remain inert until their project-local channel
-is enabled. Stop records a completed main-agent response. SessionEnd records
-the terminal event and transcript path, leaving response text to Stop.
+is enabled. Stop records a completed main-agent response as a `kind: stop`
+record. SessionEnd records the terminal event and transcript path as a
+`kind: session-end` record with empty `text`, leaving response text to Stop.
+Both land in the shared `.remember/turns/` store with `platform: codex`.
 
 **Boundaries:** Keep hook execution quiet and fail-open. Preserve the other
 channel on every state change. Capture complete main-agent payloads only, write
@@ -272,9 +279,10 @@ current definitions with `/hooks` before enabling either channel.
 
 Require one supported channel, then run the corresponding helper command with
 the channel and `--root .`, using the resolved helper path above. Status reports
-that channel's enabled state and its
-summarized and unsummarized segment counts. Report hook trust only when the
-user's `/hooks` evidence confirms it.
+that channel's enabled state plus store-wide totals: summarized and
+unsummarized counts and their per-platform breakdown, and the unsummarized
+records themselves. Report hook trust only when the user's `/hooks` evidence
+confirms it.
 
 ### `$remember clean [--apply]`
 
@@ -282,7 +290,8 @@ Run `python "<remember-skill-dir>/scripts/turn_journal.py" clean --root .` first
 and show the exact older, valid summarized segments eligible for removal. Apply
 deletion only by rerunning it with `--apply` after explicit approval.
 Retain the newest completed summary checkpoint with all its records, plus every
-unsummarized or malformed segment.
+unsummarized or malformed segment. Retention applies uniformly to every valid
+v3 segment regardless of `platform`.
 
 ---
 
@@ -403,8 +412,8 @@ remember", or "validate memory".
 2. Validation checks `.remember/MEMORY.md` for required type sections, known
    entry markers, required fields, and duplicate active `context` entries.
 3. Validation checks `.remember/memory/YYYY-MM-DD.md` journal filenames and
-   `remember-journal` metadata blocks, plus valid Stop and SessionEnd lifecycle
-   segment markers.
+   `remember-journal` metadata blocks, plus `version: 3` lifecycle segment
+   records in `.remember/turns/`.
 4. Validation reports issues without mutating files by default. Only append
    generated Memory Fast-Track steering after explicit user approval with
    `--apply-fast-track`.
