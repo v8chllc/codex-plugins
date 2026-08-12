@@ -10,6 +10,8 @@ Manages three memory lanes for the current working directory:
 1. **Daily Journal** — episodic session notes in `.remember/memory/YYYY-MM-DD.md`
 2. **Curated Memory** — durable structured entries in `.remember/MEMORY.md`
 3. **Procedural Memory** — behavior-changing guidance in approved agent-facing targets
+4. **Turn Journal** — opt-in, immutable Stop-hook records in
+   `.remember/turns/codex/`, used to preserve work across `/clear`
 
 See `references/types.md` for curated memory type templates and examples.
 See `references/agents-md-directive.md` for the legacy generated directive block
@@ -38,6 +40,12 @@ reporting, and setup-aware Memory Fast-Track steering checks.
 **Journal write:**
 - `$remember session`
 - Natural language: "capture this session", "write to journal"
+
+**Stop capture:**
+- `$remember hook enable`
+- `$remember hook disable`
+- `$remember hook status`
+- `$remember clean [--apply]`
 
 **Recommend:** use the `recommend` skill (`/recommend session`, `/recommend curated`, `/recommend procedural`).
 
@@ -74,16 +82,18 @@ reporting, and setup-aware Memory Fast-Track steering checks.
 Triggered by `$remember` with no args.
 
 1. Check whether `.remember/MEMORY.md` and `.remember/memory/` exist in cwd.
-   - If either is missing: report that memory is not initialized and tell the
-     user to run `$remember setup`. Do not create files.
+   - If either is missing: perform a concise project-context inspection: read a
+     root `README.md` and `AGENTS.md` when present, list top-level files, and
+     report the tracked-file inventory (`git ls-files` when available). Then
+     say memory is not initialized and tell the user to run `$remember setup`.
+     Do not create files.
 2. Read `.remember/MEMORY.md`.
-3. Compute today's journal path, `.remember/memory/YYYY-MM-DD.md`, using the
-   current local date.
-4. If today's journal file exists, read it. If not, report that no journal file
-   exists for today.
+3. Find the most recent dated file matching `.remember/memory/YYYY-MM-DD.md`.
+   Read it regardless of age; do not limit the lookup to today or yesterday.
+4. If no dated journal exists, report that explicitly.
 5. Respond with a concise status report:
    - durable memory loaded from `.remember/MEMORY.md`
-   - today's journal loaded or absent
+   - most recent daily journal loaded or absent
    - optional procedural targets present or missing:
      `CODING_STANDARDS.md`, `ARCHITECTURE_STANDARDS.md`,
      `WORKFLOW_STANDARDS.md`
@@ -180,21 +190,60 @@ Triggered by "Remember that `<text>`" with no explicit type keyword.
 
 ---
 
-## Workflow E: Journal Write (`$remember session`)
+## Workflow E: Session Synthesis (`$remember session`)
 
 Triggered by `$remember session` or natural language journal phrases.
 
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first and stop.
-2. Compute a best-effort `session_hash` from available context. See `references/journal-format.md` for the approach.
-3. Read today's journal file (`.remember/memory/YYYY-MM-DD.md`) if it exists; scan for an existing marker with the same hash.
-4. If hash found → skip (dedupe). Notify user that this session was already captured.
-5. If hash not found → compose a journal entry covering: what happened, key context, decisions considered, blockers, next steps, and useful references. Append entry with HTML comment metadata marker. See `references/journal-format.md` for the format.
-6. Confirm to user: file path written, or skipped with reason.
+2. Read the Codex turn-segment markers in descending `captured_at` order until
+   the newest `summarized_at` checkpoint, then include every eligible
+   unsummarized segment. This makes work from a prior context survive `/clear`.
+   If no segments exist, fall back to the available current context.
+3. Synthesize a concise journal entry from the selected records, ordered
+   chronologically. Include what happened, key context, decisions, blockers,
+   next steps, and references only when present.
+4. Write the daily journal entry using the combined turn keys as `session_hash`.
+   Before writing, scan every dated daily journal for that hash; do not append a
+   duplicate entry.
+5. Only after the daily journal write succeeds, mark each source segment with
+   `summarized_at` and `summary_path`:
+   `python plugins/v8ch/skills/remember/scripts/turn_journal.py mark-summarized --root . --summary-path .remember/memory/YYYY-MM-DD.md`.
+   Never mark records when synthesis or its journal write failed.
+6. Confirm the summary path and source segment count. Do not delete segments
+   automatically.
+
+## Workflow F: Stop Capture and Cleanup
+
+The bundled Stop hook is registered with the plugin but is inert until enabled.
+It records only completed main-agent turns, exits quietly, and never produces
+recommendations or blocks Codex. Codex requires the user to trust plugin hooks;
+ask the user to verify that trust with `/hooks` before enabling capture.
+
+### `$remember hook enable`
+
+1. Guard on initialized memory; do not initialize it implicitly.
+2. Explain the capture scope and ask the user to confirm hook trust if it has
+   not already been confirmed.
+3. Run `python plugins/v8ch/skills/remember/scripts/turn_journal.py enable --root .`.
+4. Report that future stopped turns will create immutable project-local records.
+
+### `$remember hook disable` and `$remember hook status`
+
+Run the corresponding helper command with `--root .`. Status reports whether
+capture is enabled and the count of summarized and unsummarized segments; it
+does not claim that hook trust is active without the user's `/hooks` evidence.
+
+### `$remember clean [--apply]`
+
+Run `clean --root .` first and show the exact older, valid summarized segments
+that would be removed. Delete nothing without `--apply` and explicit approval.
+With `--apply`, retain the newest completed summary checkpoint and all records
+belonging to it; never delete unsummarized or malformed segments.
 
 ---
 
-## Workflow F: Recommend Curated
+## Workflow G: Recommend Curated
 
 Invoked by the `recommend` skill (`/recommend curated`).
 
@@ -219,7 +268,7 @@ Invoked by the `recommend` skill (`/recommend curated`).
 
 ---
 
-## Workflow G: Recommend Session
+## Workflow H: Recommend Session
 
 Invoked by the `recommend` skill (`/recommend session`).
 
@@ -239,7 +288,7 @@ Invoked by the `recommend` skill (`/recommend session`).
 
 ---
 
-## Workflow H: Recommend Procedural
+## Workflow I: Recommend Procedural
 
 Invoked by the `recommend` skill (`/recommend procedural`).
 
@@ -259,7 +308,7 @@ Invoked by the `recommend` skill (`/recommend procedural`).
 
 ---
 
-## Workflow I: Procedural Write (`$remember procedure/workflow/standard <text>`)
+## Workflow J: Procedural Write (`$remember procedure/workflow/standard <text>`)
 
 Triggered by `$remember procedure <text>`, `$remember workflow <text>`, or `$remember standard <text>`.
 
@@ -276,7 +325,7 @@ Triggered by `$remember procedure <text>`, `$remember workflow <text>`, or `$rem
 
 ---
 
-## Workflow J: Review (`$remember review`)
+## Workflow K: Review (`$remember review`)
 
 Triggered by `$remember review`, "review memory", "audit memories", or "clean up remember".
 
@@ -300,7 +349,7 @@ Triggered by `$remember review`, "review memory", "audit memories", or "clean up
 
 ---
 
-## Workflow K: Validate (`$remember validate`)
+## Workflow L: Validate (`$remember validate`)
 
 Triggered by `$remember validate`, `$remember validate --json`, "validate
 remember", or "validate memory".
@@ -311,7 +360,7 @@ remember", or "validate memory".
 2. Validation checks `.remember/MEMORY.md` for required type sections, known
    entry markers, required fields, and duplicate active `context` entries.
 3. Validation checks `.remember/memory/YYYY-MM-DD.md` journal filenames and
-   `remember-journal` metadata blocks.
+   `remember-journal` metadata blocks, plus valid Stop-turn segment markers.
 4. Validation reports issues without mutating files by default. Only append
    generated Memory Fast-Track steering after explicit user approval with
    `--apply-fast-track`.
@@ -328,6 +377,8 @@ remember", or "validate memory".
 - **`AGENTS.md` absent**: do not create it during setup.
 - **No durable curated recommendations**: say no memory-worthy updates were found; do not modify files.
 - **Procedural candidate with no approved target**: surface as unsupported; present to the user as a manual decision rather than writing elsewhere.
+- **Stop hook payload lacks a session or turn ID**: skip capture quietly. Do not
+  infer an ID or write an unsafe record.
 
 ---
 

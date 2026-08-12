@@ -1,6 +1,7 @@
 import json
 import tomllib
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MARKETPLACE_PATH = REPO_ROOT / ".agents/plugins/marketplace.json"
@@ -37,7 +38,7 @@ def test_marketplace_points_to_valid_plugin_manifest() -> None:
 
     manifest = load_json(plugin_root / ".codex-plugin/plugin.json")
     assert manifest["name"] == entry["name"]
-    assert manifest["version"] == "1.0.2"
+    assert manifest["version"] == "1.1.0"
     assert manifest["description"]
 
 
@@ -53,6 +54,14 @@ def test_plugin_manifest_component_paths_exist() -> None:
         component_path = (plugin_root / value).resolve()
         assert component_path.is_relative_to(plugin_root.resolve())
         assert component_path.is_dir()
+
+    hooks_value = manifest["hooks"]
+    assert isinstance(hooks_value, str)
+    hooks_path = (plugin_root / hooks_value).resolve()
+    assert hooks_path.is_relative_to(plugin_root.resolve())
+    hooks: Any = load_json(hooks_path)
+    command = hooks["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert "$PLUGIN_ROOT/skills/remember/scripts/turn_journal.py" in command
 
 
 def test_all_plugin_skills_have_metadata() -> None:
@@ -106,3 +115,6 @@ def test_remember_skill_uses_manual_load_and_explicit_setup() -> None:
     assert "do not inject a memory-load directive" in skill_text
     assert "exactly matches the reference content" in skill_text
     assert "Inject `references/agents-md-directive.md`" not in skill_text
+    assert "most recent dated file" in skill_text
+    assert "$remember hook enable" in skill_text
+    assert "survive `/clear`" in skill_text

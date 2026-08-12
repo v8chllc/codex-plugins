@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$PLUGIN_ROOT/skills/remember/scripts/turn_journal.py\" capture",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
