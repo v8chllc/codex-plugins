@@ -23,6 +23,7 @@ REQUIRED_FIELDS = {
 }
 JOURNAL_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
 JOURNAL_BLOCK_RE = re.compile(r"<!--\s*remember-journal(?P<body>.*?)-->", re.DOTALL)
+TURN_BLOCK_RE = re.compile(r"<!--\s*remember-turn(?P<body>.*?)-->", re.DOTALL)
 MARKER_RE = re.compile(r"<!--\s*(?P<kind>[a-z][a-z-]*)\s*-->")
 HEADING_RE = re.compile(r"^##\s+(?P<section>[A-Za-z][A-Za-z -]*)\s*$", re.MULTILINE)
 FAST_TRACK_HEADING = "## Memory Fast-Track Workflow"
@@ -217,6 +218,73 @@ def validate_journals(root: Path, issues: list[Issue]) -> None:
                     "remember-journal kind must be session.",
                     "Set kind: session in the metadata block.",
                 )
+
+
+def validate_turn_segments(root: Path, issues: list[Issue]) -> None:
+    segment_dir = root / ".remember" / "turns" / "codex"
+    if not segment_dir.exists():
+        return
+    for path in sorted(p for p in segment_dir.iterdir() if p.is_file()):
+        if path.suffix != ".md":
+            add_issue(
+                issues,
+                "error",
+                "turn_segment_extension_invalid",
+                path,
+                "Turn-journal segments must be Markdown files.",
+                "Remove or rename the non-Markdown file.",
+            )
+            continue
+        text = path.read_text(encoding="utf-8")
+        match = TURN_BLOCK_RE.search(text)
+        if not match:
+            add_issue(
+                issues,
+                "error",
+                "turn_segment_metadata_missing",
+                path,
+                "Turn-journal segment has no remember-turn metadata block.",
+                "Restore the immutable segment marker or leave the file untouched.",
+            )
+            continue
+        fields = parse_fields(match.group("body"))
+        for required in (
+            "version",
+            "platform",
+            "session_id",
+            "turn_id",
+            "turn_key",
+            "captured_at",
+        ):
+            if not fields.get(required):
+                add_issue(
+                    issues,
+                    "error",
+                    "turn_segment_field_missing",
+                    path,
+                    f"remember-turn block is missing {required}.",
+                    f"Add {required}: <value> to the marker.",
+                )
+        if fields.get("platform") and fields["platform"] != "codex":
+            add_issue(
+                issues,
+                "error",
+                "turn_segment_platform_invalid",
+                path,
+                "Codex turn-journal segment must declare platform: codex.",
+                "Set platform: codex in the marker.",
+            )
+        has_stamp = bool(fields.get("summarized_at"))
+        has_path = bool(fields.get("summary_path"))
+        if has_stamp != has_path:
+            add_issue(
+                issues,
+                "error",
+                "turn_segment_summary_checkpoint_incomplete",
+                path,
+                "summarized_at and summary_path must be present together.",
+                "Restore both checkpoint fields or remove neither.",
+            )
 
 
 def detect_branch(root: Path) -> str:
@@ -432,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
     issues: list[Issue] = []
     validate_memory_file(root, issues)
     validate_journals(root, issues)
+    validate_turn_segments(root, issues)
     fast_track_added = False
     if args.check_steering or args.apply_fast_track:
         steering_file = args.steering_file or (

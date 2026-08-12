@@ -11,7 +11,7 @@ date-scoped and append-oriented. Entries are untyped prose.
 .remember/memory/YYYY-MM-DD.md
 ```
 
-Use the local date when the session ends, not UTC, unless the user specifies otherwise.
+Use the local date when the session summary is written, not UTC, unless the user specifies otherwise.
 
 ---
 
@@ -26,9 +26,9 @@ Each session journal entry consists of two parts:
 
 ```md
 <!-- remember-journal
-source: manual
+source: stop-turn-synthesis
 kind: session
-session_hash: <hash>
+session_hash: <hash of source turn keys>
 captured_at: <ISO-8601>
 window_start: <ISO-8601>
 window_end: <ISO-8601>
@@ -82,12 +82,9 @@ with `$remember session`.
 
 ### Session hash
 
-Compute a best-effort `session_hash` from the current session context:
-- Take the last N user/assistant message excerpts (e.g., last 5 exchange pairs)
-- Concatenate with session boundary signals (approximate start time or first
-  message excerpt)
-- Produce a short opaque identifier (e.g., first 8 chars of an MD5 or SHA-1 hex
-  digest of the concatenated string)
+Compute a deterministic `session_hash` from the sorted, selected Stop-turn keys.
+This is stable across a retry after `/clear`, and avoids relying on the current
+context window.
 
 The hash does not need to be cryptographically strong — it only needs to be
 stable across two captures of the same session window.
@@ -95,17 +92,49 @@ stable across two captures of the same session window.
 ### Dedupe check
 
 Before appending:
-1. Read today's journal file if it exists.
+1. Read every dated daily journal file.
 2. Scan for `<!-- remember-journal` blocks.
 3. Extract the `session_hash` from each block.
 4. If the computed hash matches an existing block: skip the write. Notify the
    user that this session was already captured.
-5. If the session continued after a prior capture (new material exists): the hash
-   will differ, and a new entry will be appended. This is correct behavior.
+5. After successful write, set `summarized_at` and `summary_path` on every
+   source turn segment. Never set those fields before the journal exists.
 
 ### Constraints
 
-- Dedupe is best-effort, not guaranteed.
+- Dedupe is deterministic for an identical set of source turn segments.
 - Do not use semantic similarity for dedupe.
 - Do not introduce an external state store or database.
 - Keep metadata in HTML comments so the journal remains readable as plain Markdown.
+
+---
+
+## Stop-turn segments
+
+When explicitly enabled, the Codex `Stop` hook writes one immutable Markdown
+file per completed main-agent turn under:
+
+```
+.remember/turns/codex/<turn-key>.md
+```
+
+Each file starts with this marker:
+
+```md
+<!-- remember-turn
+version: 1
+platform: codex
+session_id: <Codex session ID>
+turn_id: <Codex turn ID>
+turn_key: <opaque deterministic key>
+captured_at: <ISO-8601>
+summarized_at: <ISO-8601, absent until summary succeeds>
+summary_path: <daily journal path, absent until summary succeeds>
+-->
+```
+
+The hook uses `session_id + turn_id` for idempotency. `/clear` may replace the
+context while leaving earlier segment files intact, so `$remember session`
+selects unsummarized segments rather than trusting only the current session ID.
+`$remember clean` previews removal of older valid summarized checkpoints and
+requires `--apply`; it never removes unsummarized or malformed files.
