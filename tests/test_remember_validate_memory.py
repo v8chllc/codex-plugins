@@ -176,38 +176,69 @@ kind: note
     assert "journal_kind_invalid" in codes
 
 
-def test_valid_stop_and_session_end_segments_pass(tmp_path: Path) -> None:
+SEGMENT_KEYS = (
+    "version",
+    "platform",
+    "kind",
+    "key",
+    "project_root",
+    "session_id",
+    "captured_at",
+    "text",
+    "reason",
+    "transcript_path",
+    "summarized_at",
+    "summary_path",
+)
+
+
+def segment_record(root: Path, **overrides: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "version": 3,
+        "platform": "codex",
+        "kind": "stop",
+        "key": "stop-key",
+        "project_root": str(root.resolve()),
+        "session_id": "session-1",
+        "captured_at": "2026-08-12T12:00:00.000000Z",
+        "text": "Implemented the requested change.",
+        "reason": None,
+        "transcript_path": None,
+        "summarized_at": None,
+        "summary_path": None,
+    }
+    record.update(overrides)
+    return record
+
+
+def write_segment(
+    root: Path, record: dict[str, object], name: str | None = None
+) -> Path:
+    directory = root / ".remember" / "turns"
+    directory.mkdir(parents=True, exist_ok=True)
+    filename = name or f"{record['platform']}-{record['kind']}-{record['key']}.json"
+    path = directory / filename
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def test_valid_v3_segments_from_both_platforms_pass(tmp_path: Path) -> None:
     write_valid_memory(tmp_path)
-    segment_dir = tmp_path / ".remember" / "turns" / "codex"
-    segment_dir.mkdir(parents=True)
-    (segment_dir / "stop.md").write_text(
-        """<!-- remember-turn
-version: 2
-platform: codex
-channel: stop-capture
-event: Stop
-session_id: session-1
-turn_id: turn-1
-segment_key: stop-key
-captured_at: 2026-08-12T12:00:00Z
--->
-""",
-        encoding="utf-8",
-    )
-    (segment_dir / "session-end.md").write_text(
-        """<!-- remember-turn
-version: 2
-platform: codex
-channel: session-end-capture
-event: SessionEnd
-session_id: session-1
-transcript_path: /tmp/session-1.jsonl
-reason: other
-segment_key: session-end-key
-captured_at: 2026-08-12T12:01:00Z
--->
-""",
-        encoding="utf-8",
+    write_segment(tmp_path, segment_record(tmp_path))
+    write_segment(
+        tmp_path,
+        segment_record(
+            tmp_path,
+            platform="claude",
+            kind="session-end",
+            key="session-end-key",
+            text="",
+            reason="clear",
+            transcript_path="/tmp/session-1.jsonl",
+            captured_at="2026-08-12T12:01:00.000000Z",
+            summarized_at="2026-08-12T12:02:00.000000Z",
+            summary_path=".remember/memory/2026-08-12.md",
+        ),
     )
 
     result = run_validate(tmp_path, "--json")
@@ -216,31 +247,73 @@ captured_at: 2026-08-12T12:01:00Z
     assert json.loads(result.stdout)["issues"] == []
 
 
-def test_invalid_lifecycle_segment_channel_is_reported(tmp_path: Path) -> None:
+def test_legacy_and_unknown_field_segments_are_reported(tmp_path: Path) -> None:
     write_valid_memory(tmp_path)
-    segment_dir = tmp_path / ".remember" / "turns" / "codex"
-    segment_dir.mkdir(parents=True)
-    (segment_dir / "invalid.md").write_text(
-        """<!-- remember-turn
-version: 2
-platform: codex
-channel: stop-capture
-event: SessionEnd
-session_id: session-1
-transcript_path: /tmp/session-1.jsonl
-reason: other
-segment_key: invalid-key
-captured_at: 2026-08-12T12:01:00Z
--->
-""",
-        encoding="utf-8",
+    directory = tmp_path / ".remember" / "turns"
+    directory.mkdir(parents=True)
+    (directory / "legacy-v2.md").write_text(
+        "<!-- remember-turn\n-->\n", encoding="utf-8"
+    )
+    record = segment_record(tmp_path, key="extra-key")
+    record["channel"] = "stop-capture"
+    write_segment(tmp_path, record, name="codex-stop-extra-key.json")
+
+    result = run_validate(tmp_path, "--json")
+
+    assert result.returncode == 1
+    codes = {issue["code"] for issue in json.loads(result.stdout)["issues"]}
+    assert "turn_segment_extension_invalid" in codes
+    assert "turn_segment_field_unknown" in codes
+
+
+def test_segment_contract_violations_are_reported(tmp_path: Path) -> None:
+    write_valid_memory(tmp_path)
+    write_segment(
+        tmp_path,
+        segment_record(
+            tmp_path,
+            key="bad-timestamp",
+            captured_at="2026-08-12T12:00:00Z",
+        ),
+    )
+    write_segment(
+        tmp_path,
+        segment_record(
+            tmp_path,
+            key="half-written",
+            summarized_at="2026-08-12T12:02:00.000000Z",
+        ),
+    )
+    write_segment(
+        tmp_path,
+        segment_record(tmp_path, key="renamed"),
+        name="codex-stop-not-the-key.json",
+    )
+    write_segment(
+        tmp_path,
+        segment_record(tmp_path, kind="session-end", key="no-reason", text=""),
     )
 
     result = run_validate(tmp_path, "--json")
 
     assert result.returncode == 1
     codes = {issue["code"] for issue in json.loads(result.stdout)["issues"]}
-    assert "turn_segment_channel_invalid" in codes
+    assert "turn_segment_timestamp_invalid" in codes
+    assert "turn_segment_summary_checkpoint_incomplete" in codes
+    assert "turn_segment_filename_mismatch" in codes
+    assert "turn_segment_reason_invalid" in codes
+
+
+def test_legacy_codex_subdirectory_is_ignored(tmp_path: Path) -> None:
+    write_valid_memory(tmp_path)
+    legacy = tmp_path / ".remember" / "turns" / "codex"
+    legacy.mkdir(parents=True)
+    (legacy / "stop.md").write_text("<!-- remember-turn\n-->\n", encoding="utf-8")
+
+    result = run_validate(tmp_path, "--json")
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["issues"] == []
 
 
 def test_steering_detection_and_application(tmp_path: Path) -> None:
