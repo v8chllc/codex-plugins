@@ -8,7 +8,8 @@ MARKETPLACE_PATH = REPO_ROOT / ".agents/plugins/marketplace.json"
 
 
 def load_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    data: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
+    return data
 
 
 def test_marketplace_points_to_valid_plugin_manifest() -> None:
