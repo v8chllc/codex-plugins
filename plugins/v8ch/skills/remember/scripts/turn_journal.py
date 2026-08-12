@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -66,9 +67,34 @@ def load_config(root: Path, channel: str = STOP_CAPTURE) -> dict[str, Any]:
 
 
 def atomic_write(path: Path, content: str) -> None:
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(content, encoding="utf-8")
-    temporary.replace(path)
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def summary_target(root: Path, value: str) -> Optional[Path]:  # noqa: UP045
+    path = Path(value)
+    if path.is_absolute():
+        return None
+    target = (root / path).resolve()
+    memory = (root / ".remember" / "memory").resolve()
+    if target.parent != memory or not target.is_file():
+        return None
+    return target
 
 
 def segment_key(session_id: str, event_name: str, event_id: str) -> str:
@@ -180,15 +206,31 @@ def _write_segment(
         "-->\n\n"
         f"{body}"
     )
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=directory,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temporary = Path(handle.name)
     try:
-        with path.open("x", encoding="utf-8") as handle:
+        with handle:
             handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, path)
     except FileExistsError:
         return {"captured": False, "reason": "duplicate", "segment_key": key}
+    finally:
+        temporary.unlink(missing_ok=True)
     return {"captured": True, "segment_key": key, "channel": channel}
 
 
 def capture(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("agent_id"):
+        return {"captured": False, "reason": "subagent_event"}
     event_name = str(payload.get("hook_event_name") or "").strip()
     channel = EVENT_CHANNELS.get(event_name)
     if not channel:
@@ -257,7 +299,7 @@ def unsummarized(root: Path) -> list[tuple[Path, dict[str, str]]]:
 def mark_summarized(root: Path, summary_path: str) -> dict[str, Any]:
     if not memory_ready(root):
         return {"error": "memory_not_initialized"}
-    if not (root / summary_path).is_file():
+    if summary_target(root, summary_path) is None:
         return {"error": "summary_path_missing"}
     items = unsummarized(root)
     stamp = now()
@@ -279,7 +321,7 @@ def clean(root: Path, apply: bool) -> dict[str, Any]:
             valid_segment_fields(fields)
             and fields.get("summarized_at")
             and summary_path
-            and (root / summary_path).is_file()
+            and summary_target(root, summary_path) is not None
         ):
             candidates.append((path, fields))
     newest_checkpoint = max(

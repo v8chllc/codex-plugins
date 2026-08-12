@@ -122,3 +122,4 @@ def test_remember_skill_uses_manual_load_and_explicit_setup() -> None:
     assert "$remember hook enable stop-capture" in skill_text
     assert "$remember hook enable session-end-capture" in skill_text
     assert "survive `/clear`" in skill_text
+    assert "<remember-skill-dir>/scripts/turn_journal.py" in skill_text

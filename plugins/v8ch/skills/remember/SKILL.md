@@ -198,17 +198,20 @@ Triggered by "Remember that `<text>`" with no explicit type keyword.
 
 Triggered by `$remember session` or natural language journal phrases.
 
-**Outcome:** append one concise, deduplicated daily journal entry from all valid
+Resolve `<remember-skill-dir>` to the directory containing this `SKILL.md`
+before running a bundled helper.
+
+**Goal:** Append one concise, deduplicated daily journal entry from valid,
 unsummarized lifecycle records.
 
 **Inputs:** version 1 Stop segments, version 2 Stop segments, version 2
 SessionEnd segments, and the available current context when no segments exist.
 
-**Constraints:** preserve chronological order, use only evidence present in the
-selected records or an available SessionEnd transcript, and do not promote
-curated or procedural memory during synthesis.
+**Boundaries:** Preserve chronological order and ground the summary in selected
+records or an available SessionEnd transcript. Keep curated and procedural
+memory unchanged.
 
-**Output:** the daily journal path, source segment count, and whether the write
+**Result:** Report the daily journal path, source segment count, and whether the write
 was new or deduplicated.
 
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
@@ -219,56 +222,67 @@ was new or deduplicated.
    If no segments exist, fall back to the available current context.
 3. For each SessionEnd segment, read its `transcript_path` only when the file is
    still available. Treat the transcript format as unstable input and extract
-   only the context needed for the journal. If it is unavailable, retain the
-   SessionEnd metadata without inventing missing content.
+   only terminal context not already present in selected Stop segments. Use Stop
+   as the response-text source when the transcript overlaps it. If the
+   transcript is unavailable, retain the SessionEnd metadata without inventing
+   missing content.
 4. Synthesize a concise journal entry from the selected records, ordered
-   chronologically. Include what happened, key context, decisions, blockers,
-   next steps, and references only when present.
+   chronologically. Include available work, context, decisions, blockers, next
+   steps, and references.
 5. Write the daily journal entry using the combined segment keys as `session_hash`.
-   Before writing, scan every dated daily journal for that hash; do not append a
-   duplicate entry.
+   Before writing, scan every dated daily journal for that hash and reuse a
+   matching entry.
 6. Only after the daily journal write succeeds, mark each source segment with
    `summarized_at` and `summary_path`:
-   `python plugins/v8ch/skills/remember/scripts/turn_journal.py mark-summarized --root . --summary-path .remember/memory/YYYY-MM-DD.md`.
-   Never mark records when synthesis or its journal write failed.
-7. Confirm the summary path and source segment count. Do not delete segments
-   automatically.
+   `python "<remember-skill-dir>/scripts/turn_journal.py" mark-summarized --root . --summary-path .remember/memory/YYYY-MM-DD.md`.
+   Keep source markers unchanged when synthesis or its journal write fails.
+7. Confirm the summary path and source segment count. Leave segment cleanup to
+   `$remember clean`.
 
 ## Workflow F: Lifecycle Capture and Cleanup
 
-The plugin bundles independent `Stop` and `SessionEnd` hooks. Both are inert
-until their project-local channel is enabled. Stop records a completed
-main-agent response. SessionEnd records the terminal event and transcript path;
-it does not copy the Stop message into a second segment. Both hooks exit
-quietly, fail open, and never produce recommendations or steer Codex.
+**Goal:** Manage independent, opt-in `Stop` and `SessionEnd` capture and
+preview-first cleanup.
+
+**Context:** The packaged hooks remain inert until their project-local channel
+is enabled. Stop records a completed main-agent response. SessionEnd records
+the terminal event and transcript path, leaving response text to Stop.
+
+**Boundaries:** Keep hook execution quiet and fail-open. Preserve the other
+channel on every state change. Capture complete main-agent payloads only, write
+immutable project-local segments, and leave recommendations and memory steering
+outside hook execution.
+
+**Result:** Report the targeted channel state and segment counts for hook
+commands. For cleanup, report the exact preview or applied deletion set.
 
 Codex requires the user to trust plugin hooks. Ask the user to verify the
 current definitions with `/hooks` before enabling either channel.
 
 ### `$remember hook enable <channel>`
 
-1. Guard on initialized memory; do not initialize it implicitly.
+1. Require initialized memory; direct the user to `$remember setup` when absent.
 2. Require exactly one channel: `stop-capture` or `session-end-capture`.
 3. Explain that channel's scope and ask the user to confirm hook trust if it has
    not already been confirmed.
-4. Run `python plugins/v8ch/skills/remember/scripts/turn_journal.py enable <channel> --root .`.
+4. Run `python "<remember-skill-dir>/scripts/turn_journal.py" enable <channel> --root .`.
 5. Report the enabled channel and its immutable project-local segment behavior.
-   Do not claim the other channel changed.
 
 ### `$remember hook disable <channel>` and `$remember hook status <channel>`
 
 Require one supported channel, then run the corresponding helper command with
-the channel and `--root .`. Disabling one channel must preserve the other
-channel's state. Status reports that channel's enabled state and its summarized
-and unsummarized segment counts. It does not claim that hook trust is active
-without the user's `/hooks` evidence.
+the channel and `--root .`, using the resolved helper path above. Status reports
+that channel's enabled state and its
+summarized and unsummarized segment counts. Report hook trust only when the
+user's `/hooks` evidence confirms it.
 
 ### `$remember clean [--apply]`
 
-Run `clean --root .` first and show the exact older, valid summarized segments
-that would be removed. Delete nothing without `--apply` and explicit approval.
-With `--apply`, retain the newest completed summary checkpoint and all records
-belonging to it; never delete unsummarized or malformed segments.
+Run `python "<remember-skill-dir>/scripts/turn_journal.py" clean --root .` first
+and show the exact older, valid summarized segments eligible for removal. Apply
+deletion only by rerunning it with `--apply` after explicit approval.
+Retain the newest completed summary checkpoint with all its records, plus every
+unsummarized or malformed segment.
 
 ---
 
