@@ -23,7 +23,26 @@ REQUIRED_FIELDS = {
 }
 JOURNAL_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
 JOURNAL_BLOCK_RE = re.compile(r"<!--\s*remember-journal(?P<body>.*?)-->", re.DOTALL)
-TURN_BLOCK_RE = re.compile(r"<!--\s*remember-turn(?P<body>.*?)-->", re.DOTALL)
+SEGMENT_VERSION = 3
+SEGMENT_PLATFORMS = frozenset({"claude", "codex"})
+SEGMENT_KINDS = frozenset({"stop", "session-end"})
+SEGMENT_FIELDS = frozenset(
+    {
+        "version",
+        "platform",
+        "kind",
+        "key",
+        "project_root",
+        "session_id",
+        "captured_at",
+        "text",
+        "reason",
+        "transcript_path",
+        "summarized_at",
+        "summary_path",
+    }
+)
+SEGMENT_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 MARKER_RE = re.compile(r"<!--\s*(?P<kind>[a-z][a-z-]*)\s*-->")
 HEADING_RE = re.compile(r"^##\s+(?P<section>[A-Za-z][A-Za-z -]*)\s*$", re.MULTILINE)
 FAST_TRACK_HEADING = "## Memory Fast-Track Workflow"
@@ -221,107 +240,236 @@ def validate_journals(root: Path, issues: list[Issue]) -> None:
 
 
 def validate_turn_segments(root: Path, issues: list[Issue]) -> None:
-    segment_dir = root / ".remember" / "turns" / "codex"
+    """Validate the shared `version: 3` lifecycle-segment store.
+
+    The store at `.remember/turns/` is flat and holds one JSON record per file.
+    There is no v1 or v2 reader; legacy leftovers are reported as invalid files
+    rather than parsed.
+    """
+    segment_dir = root / ".remember" / "turns"
     if not segment_dir.exists():
         return
     for path in sorted(p for p in segment_dir.iterdir() if p.is_file()):
-        if path.suffix != ".md":
+        if path.suffix != ".json":
             add_issue(
                 issues,
                 "error",
                 "turn_segment_extension_invalid",
                 path,
-                "Turn-journal segments must be Markdown files.",
-                "Remove or rename the non-Markdown file.",
+                "Lifecycle segments must be version 3 JSON files.",
+                "Remove the legacy or non-JSON file from .remember/turns/.",
             )
             continue
-        text = path.read_text(encoding="utf-8")
-        match = TURN_BLOCK_RE.search(text)
-        if not match:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             add_issue(
                 issues,
                 "error",
-                "turn_segment_metadata_missing",
+                "turn_segment_unreadable",
                 path,
-                "Turn-journal segment has no remember-turn metadata block.",
-                "Restore the immutable segment marker or leave the file untouched.",
+                "Lifecycle segment is not readable JSON.",
+                "Remove the corrupt segment file.",
             )
             continue
-        fields = parse_fields(match.group("body"))
-        version = fields.get("version")
-        required_fields = ["version", "platform", "session_id", "captured_at"]
-        if version == "1":
-            required_fields.extend(("turn_id", "turn_key"))
-        else:
-            required_fields.extend(("channel", "event", "segment_key"))
-            if fields.get("event") == "Stop":
-                required_fields.append("turn_id")
-            elif fields.get("event") == "SessionEnd":
-                required_fields.extend(("transcript_path", "reason"))
-        for required in required_fields:
-            if not fields.get(required):
-                add_issue(
-                    issues,
-                    "error",
-                    "turn_segment_field_missing",
-                    path,
-                    f"remember-turn block is missing {required}.",
-                    f"Add {required}: <value> to the marker.",
-                )
-        if version and version not in {"1", "2"}:
+        validate_turn_segment_record(root, path, record, issues)
+
+
+def validate_turn_segment_record(
+    root: Path, path: Path, record: Any, issues: list[Issue]
+) -> None:
+    if not isinstance(record, dict):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_not_object",
+            path,
+            "Lifecycle segment must be a JSON object.",
+            "Remove the malformed segment file.",
+        )
+        return
+
+    keys = set(record)
+    missing = sorted(SEGMENT_FIELDS - keys)
+    unknown = sorted(keys - SEGMENT_FIELDS)
+    for field in missing:
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_field_missing",
+            path,
+            f"Lifecycle segment is missing {field}.",
+            f"Add an explicit {field} value; nullable fields use null.",
+        )
+    for field in unknown:
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_field_unknown",
+            path,
+            f"Lifecycle segment carries unknown field {field}.",
+            "Remove the field; the v3 record has exactly twelve keys.",
+        )
+    if missing or unknown:
+        return
+
+    if record["version"] != SEGMENT_VERSION:
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_version_invalid",
+            path,
+            "Lifecycle segment version must be 3.",
+            "Legacy v1 and v2 segments are unsupported; remove them.",
+        )
+    platform = record["platform"]
+    if platform not in SEGMENT_PLATFORMS:
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_platform_invalid",
+            path,
+            "Lifecycle segment platform must be claude or codex.",
+            "Set platform to the toolchain that captured the segment.",
+        )
+    kind = record["kind"]
+    if kind not in SEGMENT_KINDS:
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_kind_invalid",
+            path,
+            "Lifecycle segment kind must be stop or session-end.",
+            "Set kind to the lifecycle event that created the segment.",
+        )
+    for field in ("key", "session_id"):
+        if not isinstance(record[field], str) or not record[field]:
             add_issue(
                 issues,
                 "error",
-                "turn_segment_version_invalid",
+                "turn_segment_field_empty",
                 path,
-                "remember-turn version must be 1 or 2.",
-                "Use version 2 for new lifecycle-capture segments.",
+                f"Lifecycle segment {field} must be a non-empty string.",
+                f"Set {field} to the capturing toolchain's value.",
             )
-        if fields.get("platform") and fields["platform"] != "codex":
-            add_issue(
-                issues,
-                "error",
-                "turn_segment_platform_invalid",
-                path,
-                "Codex turn-journal segment must declare platform: codex.",
-                "Set platform: codex in the marker.",
-            )
-        event = fields.get("event")
-        channel = fields.get("channel")
-        expected_channels = {
-            "Stop": "stop-capture",
-            "SessionEnd": "session-end-capture",
-        }
-        expected_channel = expected_channels.get(event or "")
-        if version == "2" and expected_channel is None:
-            add_issue(
-                issues,
-                "error",
-                "turn_segment_event_invalid",
-                path,
-                "Version 2 remember-turn event must be Stop or SessionEnd.",
-                "Set event to the lifecycle event that created the segment.",
-            )
-        elif version == "2" and channel != expected_channel:
-            add_issue(
-                issues,
-                "error",
-                "turn_segment_channel_invalid",
-                path,
-                f"{event} segments must use channel: {expected_channel}.",
-                "Set channel to the event's matching capture channel.",
-            )
-        has_stamp = bool(fields.get("summarized_at"))
-        has_path = bool(fields.get("summary_path"))
-        if has_stamp != has_path:
-            add_issue(
-                issues,
-                "error",
-                "turn_segment_summary_checkpoint_incomplete",
-                path,
-                "summarized_at and summary_path must be present together.",
-                "Restore both checkpoint fields or remove neither.",
-            )
+    if (
+        platform in SEGMENT_PLATFORMS
+        and kind in SEGMENT_KINDS
+        and isinstance(record["key"], str)
+        and record["key"]
+        and path.name != f"{platform}-{kind}-{record['key']}.json"
+    ):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_filename_mismatch",
+            path,
+            "Lifecycle segment filename must be {platform}-{kind}-{key}.json.",
+            "Rename the file to match its record fields.",
+        )
+    if record["project_root"] != str(root):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_project_root_invalid",
+            path,
+            "Lifecycle segment project_root must be this workspace root.",
+            "Remove segments captured for a different workspace.",
+        )
+    if not isinstance(record["captured_at"], str) or not SEGMENT_TIMESTAMP_RE.match(
+        record["captured_at"]
+    ):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_timestamp_invalid",
+            path,
+            "captured_at must use YYYY-MM-DDTHH:MM:SS.ffffffZ.",
+            "Rewrite the timestamp with six-digit microseconds and a Z suffix.",
+        )
+    if not isinstance(record["text"], str):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_text_invalid",
+            path,
+            'Lifecycle segment text must be a string; use "" when empty.',
+            "Replace a null text value with an empty string.",
+        )
+    reason = record["reason"]
+    if kind == "stop" and reason is not None:
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_reason_invalid",
+            path,
+            "reason must be null for stop segments.",
+            "Set reason to null on stop segments.",
+        )
+    if kind == "session-end" and (not isinstance(reason, str) or not reason):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_reason_invalid",
+            path,
+            "reason must be a non-empty string for session-end segments.",
+            "Set reason to the terminal event reason.",
+        )
+    if record["transcript_path"] is not None and not isinstance(
+        record["transcript_path"], str
+    ):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_transcript_path_invalid",
+            path,
+            "transcript_path must be a string or null.",
+            "Set transcript_path to an absolute path or null.",
+        )
+
+    stamped = record["summarized_at"]
+    summary = record["summary_path"]
+    if (stamped is None) != (summary is None):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_summary_checkpoint_incomplete",
+            path,
+            "summarized_at and summary_path must be set or cleared together.",
+            "Restore both checkpoint fields or set both to null.",
+        )
+        return
+    if stamped is None:
+        return
+    if not isinstance(stamped, str) or not SEGMENT_TIMESTAMP_RE.match(stamped):
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_timestamp_invalid",
+            path,
+            "summarized_at must use YYYY-MM-DDTHH:MM:SS.ffffffZ.",
+            "Rewrite the timestamp with six-digit microseconds and a Z suffix.",
+        )
+    if not isinstance(summary, str) or Path(summary).is_absolute():
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_summary_path_invalid",
+            path,
+            "summary_path must be relative to the workspace root.",
+            "Use a path such as .remember/memory/YYYY-MM-DD.md.",
+        )
+        return
+    memory = (root / ".remember" / "memory").resolve()
+    if (root / summary).resolve().parent != memory:
+        add_issue(
+            issues,
+            "error",
+            "turn_segment_summary_path_invalid",
+            path,
+            "summary_path must resolve inside .remember/memory/.",
+            "Use a path such as .remember/memory/YYYY-MM-DD.md.",
+        )
 
 
 def detect_branch(root: Path) -> str:
