@@ -142,6 +142,19 @@ def test_capture_rejects_malformed_or_unrelated_payloads(tmp_path: Path) -> None
         )["reason"]
         == "missing_session_end_fields"
     )
+    assert (
+        turn_journal.capture(
+            tmp_path,
+            {
+                "hook_event_name": "Stop",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "last_assistant_message": "Subagent response",
+                "agent_id": "agent-1",
+            },
+        )["reason"]
+        == "subagent_event"
+    )
     assert not (tmp_path / ".remember" / "turns").exists()
 
 
@@ -168,6 +181,19 @@ def test_mark_summarized_supports_both_channels_only_after_target_exists(
         assert "summary_path: .remember/memory/2026-08-12.md" in path.read_text(
             encoding="utf-8"
         )
+
+
+def test_mark_summarized_rejects_paths_outside_memory(tmp_path: Path) -> None:
+    memory_root(tmp_path)
+    outside = tmp_path / "outside.md"
+    outside.write_text("not a journal\n", encoding="utf-8")
+
+    assert turn_journal.mark_summarized(tmp_path, "outside.md") == {
+        "error": "summary_path_missing"
+    }
+    assert turn_journal.mark_summarized(tmp_path, str(outside)) == {
+        "error": "summary_path_missing"
+    }
 
 
 def test_clean_previews_and_removes_only_older_valid_summarized_segments(
