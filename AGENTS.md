@@ -24,6 +24,12 @@ read `CODING_STANDARDS.md`.
 - Keep each plugin manifest at `plugins/<plugin>/.codex-plugin/plugin.json`.
 - Plugin-scoped Codex agent definitions live in `plugins/<plugin>/agents/` as
   TOML files.
+- Whenever any file under `plugins/<name>/` changes, bump the version in
+  `plugins/<name>/.codex-plugin/plugin.json` in the same pull request. A merged
+  change with no version bump ships a version already present in installed
+  caches, so clients have nothing to refetch and keep running the old code.
+- `tests/test_codex_marketplace.py` pins the expected version literally, so it
+  moves in the same commit as the bump.
 
 ## Validation
 
