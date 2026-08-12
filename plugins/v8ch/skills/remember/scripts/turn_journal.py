@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Maintain opt-in, project-local Codex lifecycle journal segments.
+"""Maintain opt-in, project-local lifecycle journal segments.
+
+Segments live in one shared, non-recursive store at `.remember/turns/` and use
+the `version: 3` JSON record format. Every toolchain writes its own `platform`
+value and reads all of them, so a single synthesis run covers everything
+captured in the workspace.
 
 The hook path is deliberately deterministic: it persists immutable Stop and
 SessionEnd records but never calls a model, emits recommendations, or blocks
@@ -15,9 +20,9 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 STOP_CAPTURE = "stop-capture"
 SESSION_END_CAPTURE = "session-end-capture"
@@ -27,21 +32,37 @@ CONFIG_NAMES = {
     SESSION_END_CAPTURE: "session-end-capture.json",
 }
 EVENT_CHANNELS = {"Stop": STOP_CAPTURE, "SessionEnd": SESSION_END_CAPTURE}
-SEGMENT_DIR = Path(".remember") / "turns" / "codex"
-TURN_MARKER = "remember-turn"
-MARKER_RE = re.compile(r"<!--\s*remember-turn(?P<body>.*?)-->", re.DOTALL)
+
+SEGMENT_DIR = Path(".remember") / "turns"
+SEGMENT_VERSION = 3
+PLATFORM = "codex"
+PLATFORMS = ("claude", "codex")
+KIND_STOP = "stop"
+KIND_SESSION_END = "session-end"
+KINDS = (KIND_STOP, KIND_SESSION_END)
+
+SEGMENT_FIELDS = (
+    "version",
+    "platform",
+    "kind",
+    "key",
+    "project_root",
+    "session_id",
+    "captured_at",
+    "text",
+    "reason",
+    "transcript_path",
+    "summarized_at",
+    "summary_path",
+)
+TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 
 
 def now() -> str:
-    return (
-        datetime.now(timezone.utc)  # noqa: UP017 - packaged python3 may be 3.9
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def root_path(value: Optional[str]) -> Path:  # noqa: UP045 - support Python 3.9
+def root_path(value: str | None) -> Path:
     return Path(value or os.getcwd()).resolve()
 
 
@@ -86,7 +107,7 @@ def atomic_write(path: Path, content: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def summary_target(root: Path, value: str) -> Optional[Path]:  # noqa: UP045
+def summary_target(root: Path, value: str) -> Path | None:
     path = Path(value)
     if path.is_absolute():
         return None
@@ -97,115 +118,144 @@ def summary_target(root: Path, value: str) -> Optional[Path]:  # noqa: UP045
     return target
 
 
+def summary_path_in_memory(root: Path, value: str) -> bool:
+    """Contract check: relative and resolving inside `.remember/memory/`."""
+    path = Path(value)
+    if path.is_absolute():
+        return False
+    target = (root / path).resolve()
+    memory = (root / ".remember" / "memory").resolve()
+    return target.parent == memory
+
+
 def segment_key(session_id: str, event_name: str, event_id: str) -> str:
     value = f"{session_id}\0{event_name}\0{event_id}"
     return hashlib.sha256(value.encode()).hexdigest()[:24]
 
 
-def marker_fields(text: str) -> dict[str, str]:
-    match = MARKER_RE.search(text)
-    if not match:
-        return {}
-    fields: dict[str, str] = {}
-    for line in match.group("body").splitlines():
-        if ":" in line:
-            key, value = line.split(":", 1)
-            fields[key.strip()] = value.strip()
-    return fields
+def segment_name(platform: str, kind: str, key: str) -> str:
+    return f"{platform}-{kind}-{key}.json"
 
 
 def segment_paths(root: Path) -> list[Path]:
     directory = root / SEGMENT_DIR
-    return sorted(directory.glob("*.md")) if directory.is_dir() else []
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.glob("*.json") if path.is_file())
 
 
-def segment_channel(
-    fields: dict[str, str],
-) -> Optional[str]:  # noqa: UP045 - support Python 3.9
-    channel = fields.get("channel")
-    if channel in CAPTURE_CHANNELS:
-        return channel
-    if fields.get("version") == "1" and fields.get("turn_key"):
-        return STOP_CAPTURE
-    return None
+def valid_segment(root: Path, path: Path, record: Any) -> bool:
+    """Return True when `record` satisfies the v3 contract for this store.
 
-
-def valid_segment_fields(fields: dict[str, str]) -> bool:
-    common = ("version", "platform", "session_id", "captured_at")
-    if not all(fields.get(field) for field in common):
+    Anything else - including v1 JSON and v2 Markdown leftovers - is malformed
+    and must be skipped rather than repaired, stamped, or deleted.
+    """
+    if not isinstance(record, dict) or set(record) != set(SEGMENT_FIELDS):
         return False
-    if fields.get("platform") != "codex":
+    if record["version"] != SEGMENT_VERSION or isinstance(record["version"], bool):
         return False
-    if fields.get("version") == "1":
-        return all(fields.get(field) for field in ("turn_id", "turn_key"))
-    event_name = fields.get("event")
-    channel = segment_channel(fields)
-    if event_name not in EVENT_CHANNELS or channel != EVENT_CHANNELS[event_name]:
+    platform, kind, key = record["platform"], record["kind"], record["key"]
+    if platform not in PLATFORMS or kind not in KINDS:
         return False
-    if not fields.get("segment_key"):
+    if not isinstance(key, str) or not key:
         return False
-    if event_name == "Stop":
-        return bool(fields.get("turn_id"))
-    return bool(fields.get("transcript_path") and fields.get("reason"))
+    if path.name != segment_name(platform, kind, key):
+        return False
+    if not isinstance(record["project_root"], str) or not record["project_root"]:
+        return False
+    if Path(record["project_root"]).resolve() != root.resolve():
+        return False
+    session_id = record["session_id"]
+    if not isinstance(session_id, str) or not session_id:
+        return False
+    captured_at = record["captured_at"]
+    if not isinstance(captured_at, str) or not TIMESTAMP_RE.match(captured_at):
+        return False
+    if not isinstance(record["text"], str):
+        return False
+    reason = record["reason"]
+    if kind == KIND_STOP:
+        if reason is not None:
+            return False
+    elif not isinstance(reason, str) or not reason:
+        return False
+    transcript_path = record["transcript_path"]
+    if transcript_path is not None and not isinstance(transcript_path, str):
+        return False
+    stamped, summary = record["summarized_at"], record["summary_path"]
+    if stamped is None and summary is None:
+        return True
+    if not isinstance(stamped, str) or not stamped:
+        return False
+    if not isinstance(summary, str) or not summary:
+        return False
+    if not TIMESTAMP_RE.match(stamped):
+        return False
+    return summary_path_in_memory(root, summary)
 
 
-def _capture_stop(
-    root: Path, payload: dict[str, Any], session_id: str
-) -> dict[str, Any]:
-    turn_id = str(payload.get("turn_id") or "").strip()
-    message = str(payload.get("last_assistant_message") or "").strip()
-    if not turn_id or not message:
-        return {"captured": False, "reason": "missing_stop_fields"}
-    key = segment_key(session_id, "Stop", turn_id)
-    marker = f"session_id: {session_id}\nturn_id: {turn_id}\nsegment_key: {key}\n"
-    body = f"## Stopped turn {turn_id}\n\n{message}\n"
-    return _write_segment(root, STOP_CAPTURE, "Stop", key, marker, body)
+def read_segment(root: Path, path: Path) -> dict[str, Any] | None:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not valid_segment(root, path, record):
+        return None
+    return dict(record)
 
 
-def _capture_session_end(
-    root: Path, payload: dict[str, Any], session_id: str
-) -> dict[str, Any]:
-    transcript_path = str(payload.get("transcript_path") or "").strip()
-    reason = str(payload.get("reason") or "").strip()
-    if not transcript_path or not reason:
-        return {"captured": False, "reason": "missing_session_end_fields"}
-    key = segment_key(session_id, "SessionEnd", reason)
-    marker = (
-        f"session_id: {session_id}\n"
-        f"transcript_path: {transcript_path}\n"
-        f"reason: {reason}\n"
-        f"segment_key: {key}\n"
-    )
-    body = (
-        f"## Ended session {session_id}\n\n"
-        f"Reason: {reason}\n\n"
-        f"Transcript: `{transcript_path}`\n"
-    )
-    return _write_segment(root, SESSION_END_CAPTURE, "SessionEnd", key, marker, body)
+def segments(root: Path) -> list[tuple[Path, dict[str, Any]]]:
+    """Every valid v3 segment in the shared store, ascending by captured_at."""
+    found: list[tuple[Path, dict[str, Any]]] = []
+    for path in segment_paths(root):
+        record = read_segment(root, path)
+        if record is not None:
+            found.append((path, record))
+    return sorted(found, key=lambda item: (item[1]["captured_at"], item[0].name))
+
+
+def unsummarized(root: Path) -> list[tuple[Path, dict[str, Any]]]:
+    return [item for item in segments(root) if item[1]["summarized_at"] is None]
+
+
+def unsummarized_records(root: Path) -> list[dict[str, Any]]:
+    return [record for _, record in unsummarized(root)]
+
+
+def platform_counts(records: list[dict[str, Any]]) -> dict[str, int]:
+    counts = dict.fromkeys(PLATFORMS, 0)
+    for record in records:
+        counts[record["platform"]] = counts.get(record["platform"], 0) + 1
+    return counts
 
 
 def _write_segment(
     root: Path,
-    channel: str,
-    event_name: str,
+    kind: str,
     key: str,
-    marker: str,
-    body: str,
+    session_id: str,
+    text: str,
+    reason: str | None,
+    transcript_path: str | None,
 ) -> dict[str, Any]:
     directory = root / SEGMENT_DIR
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{key}.md"
-    content = (
-        f"<!-- {TURN_MARKER}\n"
-        "version: 2\n"
-        "platform: codex\n"
-        f"channel: {channel}\n"
-        f"event: {event_name}\n"
-        f"{marker}"
-        f"captured_at: {now()}\n"
-        "-->\n\n"
-        f"{body}"
-    )
+    path = directory / segment_name(PLATFORM, kind, key)
+    record = {
+        "version": SEGMENT_VERSION,
+        "platform": PLATFORM,
+        "kind": kind,
+        "key": key,
+        "project_root": str(root.resolve()),
+        "session_id": session_id,
+        "captured_at": now(),
+        "text": text,
+        "reason": reason,
+        "transcript_path": transcript_path,
+        "summarized_at": None,
+        "summary_path": None,
+    }
+    content = json.dumps(record, indent=2) + "\n"
     handle = tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",
@@ -225,7 +275,48 @@ def _write_segment(
         return {"captured": False, "reason": "duplicate", "segment_key": key}
     finally:
         temporary.unlink(missing_ok=True)
-    return {"captured": True, "segment_key": key, "channel": channel}
+    return {"captured": True, "segment_key": key, "channel": kind_channel(kind)}
+
+
+def kind_channel(kind: str) -> str:
+    return STOP_CAPTURE if kind == KIND_STOP else SESSION_END_CAPTURE
+
+
+def _capture_stop(
+    root: Path, payload: dict[str, Any], session_id: str
+) -> dict[str, Any]:
+    turn_id = str(payload.get("turn_id") or "").strip()
+    message = str(payload.get("last_assistant_message") or "").strip()
+    if not turn_id or not message:
+        return {"captured": False, "reason": "missing_stop_fields"}
+    transcript_path = str(payload.get("transcript_path") or "").strip() or None
+    return _write_segment(
+        root,
+        KIND_STOP,
+        segment_key(session_id, "Stop", turn_id),
+        session_id,
+        message,
+        None,
+        transcript_path,
+    )
+
+
+def _capture_session_end(
+    root: Path, payload: dict[str, Any], session_id: str
+) -> dict[str, Any]:
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return {"captured": False, "reason": "missing_session_end_fields"}
+    transcript_path = str(payload.get("transcript_path") or "").strip() or None
+    return _write_segment(
+        root,
+        KIND_SESSION_END,
+        segment_key(session_id, "SessionEnd", reason),
+        session_id,
+        "",
+        reason,
+        transcript_path,
+    )
 
 
 def capture(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -268,32 +359,21 @@ def disable(root: Path, channel: str = STOP_CAPTURE) -> dict[str, Any]:
 
 
 def status(root: Path, channel: str = STOP_CAPTURE) -> dict[str, Any]:
-    segments = []
-    summarized = 0
-    for path in segment_paths(root):
-        fields = marker_fields(path.read_text(encoding="utf-8"))
-        if valid_segment_fields(fields) and segment_channel(fields) == channel:
-            segments.append(path)
-            if fields.get("summarized_at"):
-                summarized += 1
+    known = segments(root)
+    pending = [record for _, record in known if record["summarized_at"] is None]
     return {
         "memory_initialized": memory_ready(root),
         "channel": channel,
         "enabled": bool(load_config(root, channel).get("enabled")),
-        "segments": len(segments),
-        "unsummarized_segments": len(segments) - summarized,
+        "counts": {
+            "total": len(known),
+            "summarized": len(known) - len(pending),
+            "unsummarized": len(pending),
+            "by_platform": platform_counts([record for _, record in known]),
+            "unsummarized_by_platform": platform_counts(pending),
+        },
+        "segments": pending,
     }
-
-
-def unsummarized(root: Path) -> list[tuple[Path, dict[str, str]]]:
-    found: list[tuple[Path, dict[str, str]]] = []
-    for path in segment_paths(root):
-        fields = marker_fields(path.read_text(encoding="utf-8"))
-        if valid_segment_fields(fields) and not fields.get("summarized_at"):
-            found.append((path, fields))
-    return sorted(
-        found, key=lambda item: (item[1].get("captured_at", ""), item[0].name)
-    )
 
 
 def mark_summarized(root: Path, summary_path: str) -> dict[str, Any]:
@@ -303,39 +383,34 @@ def mark_summarized(root: Path, summary_path: str) -> dict[str, Any]:
         return {"error": "summary_path_missing"}
     items = unsummarized(root)
     stamp = now()
-    for path, _ in items:
-        text = path.read_text(encoding="utf-8")
-        replacement = text.replace(
-            "-->\n", f"summarized_at: {stamp}\nsummary_path: {summary_path}\n-->\n", 1
-        )
-        atomic_write(path, replacement)
-    return {"marked": len(items), "summarized_at": stamp, "summary_path": summary_path}
+    for path, record in items:
+        record["summarized_at"] = stamp
+        record["summary_path"] = summary_path
+        atomic_write(path, json.dumps(record, indent=2) + "\n")
+    return {
+        "marked": len(items),
+        "summarized_at": stamp,
+        "summary_path": summary_path,
+        "by_platform": platform_counts([record for _, record in items]),
+    }
 
 
 def clean(root: Path, apply: bool) -> dict[str, Any]:
-    candidates = []
-    for path in segment_paths(root):
-        fields = marker_fields(path.read_text(encoding="utf-8"))
-        summary_path = fields.get("summary_path")
-        if (
-            valid_segment_fields(fields)
-            and fields.get("summarized_at")
-            and summary_path
-            and summary_target(root, summary_path) is not None
-        ):
-            candidates.append((path, fields))
+    candidates = [
+        (path, record)
+        for path, record in segments(root)
+        if record["summarized_at"]
+        and record["summary_path"]
+        and summary_target(root, record["summary_path"]) is not None
+    ]
     newest_checkpoint = max(
-        (
-            (fields.get("summarized_at", ""), fields.get("summary_path", ""))
-            for _, fields in candidates
-        ),
+        ((record["summarized_at"], record["summary_path"]) for _, record in candidates),
         default=("", ""),
     )
     removable = [
         path
-        for path, fields in candidates
-        if (fields.get("summarized_at", ""), fields.get("summary_path", ""))
-        != newest_checkpoint
+        for path, record in candidates
+        if (record["summarized_at"], record["summary_path"]) != newest_checkpoint
     ]
     if apply:
         for path in removable:
@@ -347,11 +422,14 @@ def clean(root: Path, apply: bool) -> dict[str, Any]:
     }
 
 
-def hook_main() -> int:
+def hook_main(root: Path | None = None) -> int:
     try:
         payload = json.load(sys.stdin)
         if isinstance(payload, dict):
-            capture(root_path(str(payload.get("cwd") or "")), payload)
+            target = (
+                root if root is not None else root_path(str(payload.get("cwd") or ""))
+            )
+            capture(target, payload)
     except Exception:
         pass  # Lifecycle capture must never interfere with Codex.
     return 0
@@ -361,7 +439,15 @@ def cli_main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=("enable", "disable", "status", "mark-summarized", "clean", "capture"),
+        choices=(
+            "enable",
+            "disable",
+            "status",
+            "unsummarized",
+            "mark-summarized",
+            "clean",
+            "capture",
+        ),
     )
     parser.add_argument("channel", nargs="?", choices=CAPTURE_CHANNELS)
     parser.add_argument("--root")
@@ -370,14 +456,17 @@ def cli_main() -> int:
     args = parser.parse_args()
     root = root_path(args.root)
     if args.command == "capture":
-        return hook_main()
+        return hook_main(root if args.root else None)
     channel = args.channel or STOP_CAPTURE
+    result: Any
     if args.command == "enable":
         result = enable(root, channel)
     elif args.command == "disable":
         result = disable(root, channel)
     elif args.command == "status":
         result = status(root, channel)
+    elif args.command == "unsummarized":
+        result = unsummarized_records(root)
     elif args.command == "mark-summarized":
         if not args.summary_path:
             parser.error("mark-summarized requires --summary-path")
@@ -385,7 +474,7 @@ def cli_main() -> int:
     else:
         result = clean(root, args.apply)
     print(json.dumps(result, indent=2))
-    return 1 if result.get("error") else 0
+    return 1 if isinstance(result, dict) and result.get("error") else 0
 
 
 if __name__ == "__main__":
