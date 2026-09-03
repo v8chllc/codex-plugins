@@ -360,6 +360,7 @@ def test_steering_detection_and_application(tmp_path: Path) -> None:
 
 
 def write_local_context(root: Path, body: str) -> Path:
+    """Write a local context file with the given body and return its path."""
     local_dir = root / ".remember" / "local"
     local_dir.mkdir(parents=True, exist_ok=True)
     context_path = local_dir / "context.md"
@@ -375,6 +376,7 @@ Updated: 2026-07-03
 
 
 def test_valid_local_context_passes(tmp_path: Path) -> None:
+    """Verify that a valid local context file passes validation."""
     write_valid_memory(tmp_path)
     write_local_context(tmp_path, VALID_LOCAL_CONTEXT)
 
@@ -386,6 +388,7 @@ def test_valid_local_context_passes(tmp_path: Path) -> None:
 
 
 def test_missing_local_context_is_not_an_issue(tmp_path: Path) -> None:
+    """Verify that a missing local context file does not trigger validation errors."""
     write_valid_memory(tmp_path)
     (tmp_path / ".remember" / "local").mkdir(parents=True)
 
@@ -397,6 +400,7 @@ def test_missing_local_context_is_not_an_issue(tmp_path: Path) -> None:
 
 
 def test_duplicate_local_context_entries_are_reported(tmp_path: Path) -> None:
+    """Verify that multiple context entries in local context are reported as an error."""
     write_valid_memory(tmp_path)
     write_local_context(
         tmp_path,
@@ -421,6 +425,7 @@ Updated: 2026-07-04
 
 
 def test_local_context_missing_required_field_is_reported(tmp_path: Path) -> None:
+    """Verify that a local context entry missing a required field is reported as an error."""
     write_valid_memory(tmp_path)
     write_local_context(
         tmp_path,
@@ -440,6 +445,7 @@ Updated: 2026-07-03
 
 
 def test_unknown_marker_in_local_context_is_reported(tmp_path: Path) -> None:
+    """Verify that a non-context marker in local context is reported as an error."""
     write_valid_memory(tmp_path)
     write_local_context(
         tmp_path,
@@ -459,6 +465,7 @@ Rationale: Decisions belong in MEMORY.md
 
 
 def init_git_repo(root: Path) -> None:
+    """Initialize a minimal git repository for testing git-dependent validations."""
     for args in (
         ["init", "--quiet"],
         ["config", "user.email", "test@example.com"],
@@ -468,6 +475,7 @@ def init_git_repo(root: Path) -> None:
 
 
 def test_unignored_local_context_is_reported_in_a_git_repo(tmp_path: Path) -> None:
+    """Verify that an unignored local context directory triggers an error in a git repo."""
     init_git_repo(tmp_path)
     write_valid_memory(tmp_path)
     write_local_context(tmp_path, VALID_LOCAL_CONTEXT)
@@ -481,6 +489,7 @@ def test_unignored_local_context_is_reported_in_a_git_repo(tmp_path: Path) -> No
 
 
 def test_ignored_local_context_passes_in_a_git_repo(tmp_path: Path) -> None:
+    """Verify that a properly gitignored local context passes validation in a git repo."""
     init_git_repo(tmp_path)
     write_valid_memory(tmp_path)
     write_local_context(tmp_path, VALID_LOCAL_CONTEXT)
@@ -494,6 +503,7 @@ def test_ignored_local_context_passes_in_a_git_repo(tmp_path: Path) -> None:
 
 
 def test_generated_fast_track_section_reports_no_drift(tmp_path: Path) -> None:
+    """Verify that a freshly generated fast-track section passes drift checks."""
     write_valid_memory(tmp_path)
     (tmp_path / STEERING_FILE).write_text("# Steering\n", encoding="utf-8")
 
@@ -514,6 +524,7 @@ def test_generated_fast_track_section_reports_no_drift(tmp_path: Path) -> None:
 
 
 def test_fast_track_drift_reports_missing_allowlist_paths(tmp_path: Path) -> None:
+    """Verify that missing required paths in the fast-track allowlist are reported as warnings."""
     write_valid_memory(tmp_path)
     (tmp_path / STEERING_FILE).write_text(
         f"""# Steering
@@ -547,6 +558,7 @@ Allowed paths:
 
 
 def test_fast_track_drift_reports_stale_context_clause(tmp_path: Path) -> None:
+    """Verify that outdated context conflict-resolution instructions are flagged as drift."""
     write_valid_memory(tmp_path)
     (tmp_path / STEERING_FILE).write_text(
         f"""# Steering
@@ -583,6 +595,7 @@ Allowed paths:
 
 
 def test_drift_check_does_not_rewrite_the_steering_file(tmp_path: Path) -> None:
+    """Verify that drift checks do not modify the steering file."""
     write_valid_memory(tmp_path)
     steering_path = tmp_path / STEERING_FILE
     original = f"""# Steering
