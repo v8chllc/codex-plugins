@@ -400,7 +400,7 @@ def test_missing_local_context_is_not_an_issue(tmp_path: Path) -> None:
 
 
 def test_duplicate_local_context_entries_are_reported(tmp_path: Path) -> None:
-    """Verify that multiple context entries in local context are reported as an error."""
+    """Verify that duplicate local context entries are reported."""
     write_valid_memory(tmp_path)
     write_local_context(
         tmp_path,
@@ -425,7 +425,7 @@ Updated: 2026-07-04
 
 
 def test_local_context_missing_required_field_is_reported(tmp_path: Path) -> None:
-    """Verify that a local context entry missing a required field is reported as an error."""
+    """Verify that a local context entry missing a required field is reported."""
     write_valid_memory(tmp_path)
     write_local_context(
         tmp_path,
@@ -475,7 +475,7 @@ def init_git_repo(root: Path) -> None:
 
 
 def test_unignored_local_context_is_reported_in_a_git_repo(tmp_path: Path) -> None:
-    """Verify that an unignored local context directory triggers an error in a git repo."""
+    """Verify that an unignored local context directory is reported."""
     init_git_repo(tmp_path)
     write_valid_memory(tmp_path)
     write_local_context(tmp_path, VALID_LOCAL_CONTEXT)
@@ -489,7 +489,7 @@ def test_unignored_local_context_is_reported_in_a_git_repo(tmp_path: Path) -> No
 
 
 def test_ignored_local_context_passes_in_a_git_repo(tmp_path: Path) -> None:
-    """Verify that a properly gitignored local context passes validation in a git repo."""
+    """Verify that a gitignored local context passes in a Git repo."""
     init_git_repo(tmp_path)
     write_valid_memory(tmp_path)
     write_local_context(tmp_path, VALID_LOCAL_CONTEXT)
@@ -524,7 +524,7 @@ def test_generated_fast_track_section_reports_no_drift(tmp_path: Path) -> None:
 
 
 def test_fast_track_drift_reports_missing_allowlist_paths(tmp_path: Path) -> None:
-    """Verify that missing required paths in the fast-track allowlist are reported as warnings."""
+    """Verify that missing allowlist paths are reported as drift warnings."""
     write_valid_memory(tmp_path)
     (tmp_path / STEERING_FILE).write_text(
         f"""# Steering
@@ -558,7 +558,7 @@ Allowed paths:
 
 
 def test_fast_track_drift_reports_stale_context_clause(tmp_path: Path) -> None:
-    """Verify that outdated context conflict-resolution instructions are flagged as drift."""
+    """Verify that a stale context clause is reported as a drift warning."""
     write_valid_memory(tmp_path)
     (tmp_path / STEERING_FILE).write_text(
         f"""# Steering
