@@ -1,5 +1,4 @@
 import json
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -48,13 +47,18 @@ def test_plugin_manifest_component_paths_exist() -> None:
     manifest = load_json(manifest_path)
     plugin_root = manifest_path.parent.parent
 
-    for component in ("skills", "agents"):
-        value = manifest[component]
-        assert isinstance(value, str)
-        assert value.startswith("./")
-        component_path = (plugin_root / value).resolve()
-        assert component_path.is_relative_to(plugin_root.resolve())
-        assert component_path.is_dir()
+    # Codex plugins cannot register agents: the manifest parser drops the key and
+    # custom agents load only from ~/.codex/agents or .codex/agents. The roles are
+    # skill-bundled prompt assets instead.
+    assert "agents" not in manifest
+    assert not (plugin_root / "agents").exists()
+
+    value = manifest["skills"]
+    assert isinstance(value, str)
+    assert value.startswith("./")
+    skills_path = (plugin_root / value).resolve()
+    assert skills_path.is_relative_to(plugin_root.resolve())
+    assert skills_path.is_dir()
 
     hooks_value = manifest["hooks"]
     assert isinstance(hooks_value, str)
@@ -73,7 +77,6 @@ def test_all_plugin_skills_have_metadata() -> None:
     skill_files = sorted(skill_root.glob("*/SKILL.md"))
     assert {path.parent.name for path in skill_files} == {
         "consensus-review",
-        "meta-consensus-review-agents",
         "recommend",
         "remember",
     }
@@ -86,26 +89,24 @@ def test_all_plugin_skills_have_metadata() -> None:
         assert "\ndescription:" in f"\n{header}"
 
 
-def test_plugin_agents_are_valid_codex_toml() -> None:
-    agent_root = REPO_ROOT / "plugins/v8ch/agents"
-    agent_files = sorted(agent_root.glob("*.toml"))
-    assert {path.stem for path in agent_files} == {
-        "acceptance-recommender",
+def test_consensus_review_roles_ship_as_skill_bundled_prompt_assets() -> None:
+    agent_root = REPO_ROOT / "plugins/v8ch/skills/consensus-review/agents"
+    assert {path.stem for path in agent_root.glob("*.md")} == {
+        "architecture-reviewer",
         "consensus-review-fixer",
         "consensus-review-poster",
-        "opt-in-recommender",
+        "correctness-reviewer",
         "review-synthesizer",
+        "standards-reviewer",
     }
-    assert not list(agent_root.glob("*.md"))
+    # TOML agent definitions are never registered by Codex; the roles must not
+    # reappear in that form.
+    assert not list(agent_root.glob("*.toml"))
+    assert not list(REPO_ROOT.glob("plugins/*/agents/*.toml"))
 
-    for agent_file in agent_files:
-        data = tomllib.loads(agent_file.read_text(encoding="utf-8"))
-        assert data["name"] == agent_file.stem
-        assert data["description"]
-        assert data["model"]
-        assert data["model_reasoning_effort"] in {"low", "medium", "high"}
-        assert data["sandbox_mode"] in {"read-only", "workspace-write"}
-        assert data["developer_instructions"]
+
+def test_meta_consensus_review_agents_skill_is_removed() -> None:
+    assert not (REPO_ROOT / "plugins/v8ch/skills/meta-consensus-review-agents").exists()
 
 
 def test_remember_skill_uses_manual_load_and_explicit_setup() -> None:

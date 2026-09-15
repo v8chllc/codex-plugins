@@ -1,963 +1,371 @@
-import importlib.util
+"""Tests for consensus-review PR/MR context recovery."""
+
 import json
+import subprocess
 from pathlib import Path
-from types import ModuleType
+from typing import Any
 
 import pytest
-from typer.testing import CliRunner
+import recover_context as rc
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "plugins/v8ch/skills/consensus-review/scripts/recover_context.py"
+from tests.consensus_review_support import FIXTURES_DIR
+
+GITHUB_V2 = FIXTURES_DIR / "comments-github-v2.json"
+GITLAB_V2 = FIXTURES_DIR / "comments-gitlab-v2.json"
+LEGACY_V1 = FIXTURES_DIR / "comments-legacy-v1.json"
+
+
+def load(path: Path) -> list[dict[str, Any]]:
+    return rc.load_comments_json(path)
+
+
+# --- platform detection ----------------------------------------------------
+
+
+def test_platform_override_wins(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=github\n", encoding="utf-8")
+    assert rc.read_platform("GitLab", tmp_path) == "gitlab"
+
+
+def test_platform_falls_back_to_env_then_github(tmp_path: Path) -> None:
+    assert rc.read_platform(None, tmp_path) == "github"
+    (tmp_path / ".env").write_text('DEV_SEC_OPS_PLATFORM="gitlab"\n', encoding="utf-8")
+    assert rc.read_platform(None, tmp_path) == "gitlab"
+
+
+# --- paginated payload decoding --------------------------------------------
+
+
+def test_decode_json_stream_handles_concatenated_pages() -> None:
+    payload = '[{"body": "a"}]\n[{"body": "b"}]\n'
+    assert rc.flatten_comment_pages(payload) == [{"body": "a"}, {"body": "b"}]
+
+
+def test_decode_json_stream_handles_a_single_page() -> None:
+    assert rc.flatten_comment_pages('[{"body": "a"}]') == [{"body": "a"}]
+
+
+def test_flatten_skips_non_dict_entries() -> None:
+    assert rc.flatten_comment_pages('[{"body": "a"}, 3, null]') == [{"body": "a"}]
+
+
+# --- v2 metadata validation (contract C-5) ---------------------------------
+
+
+def valid_metadata(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "cycle": 1,
+        "delegation_mode": "parallel-subagents",
+        "files_touched": 2,
+        "findings_closed": 0,
+        "findings_opened": 2,
+        "plan_source": "none",
+        "reviewed_sha": "abc1234",
+        "schema_version": 2,
+        "scope_basis": "full-diff",
+        "score": 88,
+        "status": "passing",
+        "type": "review",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_valid_v2_metadata_is_accepted() -> None:
+    assert rc.validate_v2_metadata(valid_metadata()) is True
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"cycle": 0},
+        {"cycle": "1"},
+        {"score": 0},
+        {"score": 101},
+        {"status": "unknown"},
+        {"delegation_mode": "solo"},
+        {"plan_source": ""},
+        {"reviewed_sha": "ABC1234"},
+        {"scope_basis": "delta"},
+        {"files_touched": -1},
+        {"findings_opened": -1},
+        {"findings_closed": -1},
+        {"type": "acceptance"},
+    ],
 )
-
-POST_SCRIPT_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "plugins/v8ch/skills/consensus-review/scripts/post_review_comment.py"
-)
+def test_invalid_v2_metadata_is_rejected(override: dict[str, Any]) -> None:
+    assert rc.validate_v2_metadata(valid_metadata(**override)) is False
 
 
-def load_post_review_comment_for_recover() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "post_review_comment_for_recover", POST_SCRIPT_PATH
+def test_v2_metadata_rejects_an_extra_or_missing_key() -> None:
+    extra = valid_metadata()
+    extra["unexpected"] = 1
+    assert rc.validate_v2_metadata(extra) is False
+    missing = valid_metadata()
+    del missing["scope_basis"]
+    assert rc.validate_v2_metadata(missing) is False
+
+
+def test_a_comment_failing_validation_is_ignored() -> None:
+    comments = rc.parse_audit_comments(load(LEGACY_V1))
+    assert all(comment.schema_version == 1 for comment in comments)
+    assert not any(comment.is_v2_review for comment in comments)
+
+
+def test_v1_non_review_types_are_ignored() -> None:
+    comments = rc.parse_audit_comments(load(LEGACY_V1))
+    assert [comment.comment_type for comment in comments] == ["review"]
+
+
+def test_a_comment_without_metadata_is_ignored() -> None:
+    comments = rc.parse_audit_comments(load(GITHUB_V2))
+    assert len(comments) == 2
+    assert all(comment.is_v2_review for comment in comments)
+
+
+# --- cycle and scope resolution --------------------------------------------
+
+
+def test_next_cycle_follows_the_highest_prior_cycle() -> None:
+    assert rc.next_cycle(rc.parse_audit_comments(load(GITHUB_V2))) == 3
+    assert rc.next_cycle(rc.parse_audit_comments(load(LEGACY_V1))) == 2
+    assert rc.next_cycle([]) == 1
+
+
+def test_scope_basis_is_full_diff_without_a_prior_review() -> None:
+    basis, reason = rc.resolve_scope_basis([], ancestor_check=False)
+    assert basis == "full-diff"
+    assert "no prior consensus-review comment" in reason
+
+
+def test_scope_basis_is_full_diff_after_a_legacy_review() -> None:
+    comments = rc.parse_audit_comments(load(LEGACY_V1))
+    basis, reason = rc.resolve_scope_basis(comments, ancestor_check=False)
+    assert basis == "full-diff"
+    assert "schema_version 1 legacy history" in reason
+
+
+def test_scope_basis_narrows_to_the_latest_v2_sha() -> None:
+    comments = rc.parse_audit_comments(load(GITHUB_V2))
+    basis, reason = rc.resolve_scope_basis(comments, ancestor_check=False)
+    assert basis == "delta-since:def5678"
+    assert "cycle 02" in reason
+
+
+def test_scope_basis_falls_back_when_the_sha_is_not_an_ancestor(
+    tmp_path: Path,
+) -> None:
+    comments = rc.parse_audit_comments(load(GITHUB_V2))
+    basis, reason = rc.resolve_scope_basis(comments, repo_dir=tmp_path)
+    assert basis == "full-diff"
+    assert "not an ancestor of HEAD" in reason
+
+
+def test_ancestor_check_reads_real_git_history(tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (tmp_path / "file.txt").write_text("one\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "first")
+    first = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (tmp_path / "file.txt").write_text("two\n", encoding="utf-8")
+    git("commit", "-qam", "second")
+
+    assert rc.is_ancestor(first[:7], tmp_path) is True
+    assert rc.is_ancestor("0" * 40, tmp_path) is False
+
+
+def test_latest_v2_review_picks_the_highest_cycle() -> None:
+    comments = rc.parse_audit_comments(load(GITHUB_V2))
+    latest = rc.latest_v2_review(comments)
+    assert latest is not None
+    assert latest.cycle == 2
+    assert latest.metadata["reviewed_sha"] == "def5678"
+
+
+# --- output ----------------------------------------------------------------
+
+
+def build_output(path: Path, platform: str = "github") -> str:
+    comments = rc.parse_audit_comments(load(path))
+    basis, reason = rc.resolve_scope_basis(comments, ancestor_check=False)
+    return rc.build_context_output(
+        number=9,
+        platform=platform,
+        audit_comments=comments,
+        scope_basis=basis,
+        scope_reason=reason,
     )
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
-def load_recover_context() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("recover_context", SCRIPT_PATH)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def test_output_header_carries_the_recovery_facts() -> None:
+    output = build_output(GITHUB_V2)
+    assert output.startswith("# RECOVERED_CONTEXT")
+    assert "**Platform:** github" in output
+    assert "**PR:** 9" in output
+    assert "**Next cycle:** 03" in output
+    assert "**Score source:** raw review score" in output
+    assert "**Scope basis:** delta-since:def5678" in output
+    assert "**Scope basis reason:** cycle 02 reviewed def5678" in output
 
 
-def audit_body(metadata: dict[str, object], visible_body: str) -> str:
-    payload = {"schema_version": 1, **metadata}
-    encoded = json.dumps(payload, sort_keys=True)
-    return f"<!-- consensus-review\n{encoded}\n-->\n\n{visible_body}"
+def test_output_uses_the_mr_label_for_gitlab() -> None:
+    assert "**MR:** 9" in build_output(GITLAB_V2, platform="gitlab")
 
 
-def write_comments(path: Path, comments: list[dict[str, object]]) -> None:
-    path.write_text(json.dumps({"comments": comments}), encoding="utf-8")
+def test_output_lists_prior_reviews_with_provenance() -> None:
+    output = build_output(GITHUB_V2)
+    assert "## Prior Reviews" in output
+    assert "| Cycle | Score | Status | Delegation | Plan | Scope |" in output
+    assert "| 01 | 88 | passing | parallel-subagents | none | full-diff |" in output
 
 
-def test_parse_accepted_findings_inline_format() -> None:
-    module = load_recover_context()
-    text = (
-        "1. [HIGH] Missing error handling — `src/foo.py`\n"
-        "2. [MEDIUM] Unused variable — `src/bar.py`\n"
+def test_output_includes_the_full_surviving_body() -> None:
+    output = build_output(GITHUB_V2)
+    assert "**Full report:**" in output
+    assert "#### [F-1] [HIGH] Retry path drops the correlation id" in output
+    assert "### Score Breakdown" in output
+
+
+def test_output_extracts_the_summary_section() -> None:
+    output = build_output(GITHUB_V2)
+    assert "- One HIGH finding: the payload builder drops a required field" in output
+
+
+def test_output_reports_no_prior_comments() -> None:
+    output = rc.build_context_output(
+        number=9,
+        platform="github",
+        audit_comments=[],
+        scope_basis="full-diff",
+        scope_reason="no prior consensus-review comment exists",
     )
-    findings = module._parse_accepted_findings(text)
-    assert findings == [
-        {"severity": "HIGH", "title": "Missing error handling", "file": "src/foo.py"},
-        {"severity": "MEDIUM", "title": "Unused variable", "file": "src/bar.py"},
+    assert "This is the first cycle." in output
+    assert "## Prior Reviews" not in output
+
+
+def test_output_separates_legacy_history() -> None:
+    output = build_output(LEGACY_V1)
+    assert "## Legacy History (schema_version 1)" in output
+    assert "never supplies a narrowing" in output
+    assert "## Prior Reviews" not in output
+
+
+# --- fetching --------------------------------------------------------------
+
+
+def test_github_fetch_uses_the_issue_comments_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0, '[{"body": "x"}]', "")
+
+    monkeypatch.setattr(rc, "GH", "/usr/bin/gh")
+    monkeypatch.setattr(rc.subprocess, "run", fake_run)
+    assert rc.fetch_github_comments(9, "/repo") == [{"body": "x"}]
+    assert seen[0] == [
+        "/usr/bin/gh",
+        "api",
+        "repos/{owner}/{repo}/issues/9/comments",
+        "--paginate",
     ]
 
 
-def test_parse_opted_in_findings_inline_format() -> None:
-    module = load_recover_context()
-    text = (
-        "1. Potential race condition — `src/foo.py` "
-        "(low-confidence reviewer: correctness-reviewer)\n"
-        "2. Stale comment reference — `src/util.py` "
-        "(low-confidence reviewer: standards-reviewer)\n"
-    )
-    findings = module._parse_opted_in_findings(text)
-    assert findings == [
-        {
-            "title": "Potential race condition",
-            "file": "src/foo.py",
-            "source": "low-confidence reviewer: correctness-reviewer",
-        },
-        {
-            "title": "Stale comment reference",
-            "file": "src/util.py",
-            "source": "low-confidence reviewer: standards-reviewer",
-        },
+def test_gitlab_fetch_uses_the_notes_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0, '[{"note": "x"}]', "")
+
+    monkeypatch.setattr(rc, "GLAB", "/usr/bin/glab")
+    monkeypatch.setattr(rc.subprocess, "run", fake_run)
+    assert rc.fetch_gitlab_comments(9, "/repo") == [{"note": "x"}]
+    assert seen[0] == [
+        "/usr/bin/glab",
+        "api",
+        "projects/:id/merge_requests/9/notes",
+        "--paginate",
     ]
 
 
-def test_parse_audit_comments_filters_non_consensus_comments() -> None:
-    module = load_recover_context()
-    raw_comments = [
-        {"body": "ordinary comment", "createdAt": "2026-01-01T00:00:00Z"},
-        {
-            "body": audit_body(
-                {"type": "review", "cycle": 1, "status": "passing", "score": 88},
-                "### Summary\n- Good\n",
-            ),
-            "createdAt": "2026-01-01T00:01:00Z",
-            "url": "https://example.test/comment/1",
-        },
-    ]
+def test_fetch_requires_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rc, "GH", None)
+    with pytest.raises(FileNotFoundError, match="gh executable"):
+        rc.fetch_github_comments(9)
+    monkeypatch.setattr(rc, "GLAB", None)
+    with pytest.raises(FileNotFoundError, match="glab executable"):
+        rc.fetch_gitlab_comments(9)
 
-    comments = module.parse_audit_comments(raw_comments)
 
+def test_fetch_raises_on_a_client_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", "not authenticated")
+
+    monkeypatch.setattr(rc, "GH", "/usr/bin/gh")
+    monkeypatch.setattr(rc.subprocess, "run", fake_run)
+    with pytest.raises(subprocess.CalledProcessError):
+        rc.fetch_github_comments(9)
+
+
+def test_gitlab_notes_are_normalized_like_github_comments() -> None:
+    comments = rc.parse_audit_comments(load(GITLAB_V2))
     assert len(comments) == 1
-    assert comments[0].comment_type == "review"
-    assert comments[0].cycle == 1
-    assert comments[0].url == "https://example.test/comment/1"
+    assert comments[0].author == "reviewer"
+    assert comments[0].url.endswith("#note_1")
 
 
-def test_first_cycle_from_empty_pr_comments(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(comments_json, [])
-
-    result = runner.invoke(
-        module.app,
-        ["123", "--platform", "github", "--comments-json", str(comments_json)],
-    )
-
-    assert result.exit_code == 0
-    assert "Next cycle:** 01" in result.output
-    assert "No prior consensus-review comments found" in result.output
-    assert "Audit source:** PR/MR comments" in result.output
-    assert "PR 123" in result.output
+def test_load_comments_json_accepts_both_shapes(tmp_path: Path) -> None:
+    listed = tmp_path / "list.json"
+    listed.write_text(json.dumps([{"body": "a"}]), encoding="utf-8")
+    wrapped = tmp_path / "wrapped.json"
+    wrapped.write_text(json.dumps({"comments": [{"body": "a"}]}), encoding="utf-8")
+    assert rc.load_comments_json(listed) == rc.load_comments_json(wrapped)
 
 
-def test_prior_cycle_context_from_pr_comments(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(
-        comments_json,
-        [
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 1, "status": "failing", "score": 78},
-                    "### ❌ Review\n\n### Summary\n- Found 3 must-fix items\n\n"
-                    "<details>\n<summary>Full consensus review</summary>\n\n"
-                    "### Quality Score: 78/100\n\n</details>\n",
-                ),
-                "createdAt": "2026-01-01T00:00:00Z",
-                "url": "https://example.test/review-1",
-            },
-            {
-                "body": audit_body(
-                    {"type": "fix_validation", "cycle": 1, "status": "clean"},
-                    "### Review Findings Fixed\n\n### Summary\n"
-                    "- Fix Validation: All 3 findings from cycle 1 review resolved.\n\n"
-                    "<details>\n<summary>Full fix log</summary>\n\n## Status Table\n",
-                ),
-                "createdAt": "2026-01-01T00:10:00Z",
-                "url": "https://example.test/fix-1",
-            },
-            {
-                "body": audit_body(
-                    {
-                        "type": "acceptance",
-                        "cycle": 1,
-                        "before_score": 78,
-                        "after_score": 85,
-                    },
-                    "### Accepted Findings\n"
-                    "1. [HIGH] Defensive null check — `src/service.py`\n",
-                ),
-                "createdAt": "2026-01-01T00:11:00Z",
-            },
-            {
-                "body": audit_body(
-                    {"type": "low_confidence_opt_in", "cycle": 1},
-                    "### Added Findings\n"
-                    "1. Stale comment reference — `src/util.py` "
-                    "(low-confidence reviewer: standards-reviewer)\n",
-                ),
-                "createdAt": "2026-01-01T00:12:00Z",
-            },
-        ],
-    )
-
-    result = runner.invoke(
-        module.app,
-        ["100", "--platform", "github", "--comments-json", str(comments_json)],
-    )
-
-    assert result.exit_code == 0
-    assert "Next cycle:** 02" in result.output
-    assert (
-        "| 01 | 78/100 | failing | present | https://example.test/review-1 |"
-        in result.output
-    )
-    assert "Found 3 must-fix items" in result.output
-    assert "Fix Validation: All 3 findings" in result.output
-    assert "Defensive null check" in result.output
-    assert "Total accepted: 1 findings" in result.output
-    assert "Stale comment reference" in result.output
-    assert "Total historical opt-ins: 1 findings" in result.output
-    assert "Latest fix validation: cycle 01" in result.output
+def test_load_comments_json_rejects_another_shape(tmp_path: Path) -> None:
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps({"comments": 3}), encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a list"):
+        rc.load_comments_json(path)
 
 
-def test_resolves_latest_cycle_scratch_artifacts_from_github_comments(
-    tmp_path: Path,
+# --- CLI -------------------------------------------------------------------
+
+
+def test_cli_prints_the_recovered_context(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    scratch_dir = tmp_path / "scratch"
-    write_comments(
-        comments_json,
-        [
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 1, "status": "passing", "score": 86},
-                    "### ✅ Review\n\n### Summary\n- Cycle 1 summary\n\n"
-                    "<details>\n<summary>Full consensus review</summary>\n\n"
-                    "### Quality Score: 86/100\n\nOld review details.\n\n</details>\n",
-                ),
-                "createdAt": "2026-01-01T00:00:00Z",
-                "url": "https://example.test/review-1",
-            },
-            {
-                "body": audit_body(
-                    {"type": "fix_validation", "cycle": 1, "status": "clean"},
-                    "### Review Findings Fixed\n\n### Summary\n- Fixed cycle 1\n\n"
-                    "<details>\n<summary>Full fix log</summary>\n\n"
-                    "## Status Table\n\nOld fix log.\n\n</details>\n",
-                ),
-                "createdAt": "2026-01-01T00:10:00Z",
-                "url": "https://example.test/fix-1",
-            },
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 2, "status": "failing", "score": 73},
-                    "### ❌ Review\n\n### Summary\n- Latest review summary\n\n"
-                    "<details>\n<summary>Full consensus review</summary>\n\n"
-                    "### Quality Score: 73/100\n\n"
-                    "Latest review details.\n\n</details>\n",
-                ),
-                "createdAt": "2026-01-02T00:00:00Z",
-                "url": "https://example.test/review-2",
-            },
-            {
-                "body": audit_body(
-                    {
-                        "type": "additional_acceptance",
-                        "cycle": 2,
-                        "before_score": 73,
-                        "after_score": 78,
-                    },
-                    "### Accepted Findings\n"
-                    "1. [MEDIUM] Accepted restart finding — `src/accepted.py`\n",
-                ),
-                "createdAt": "2026-01-02T00:01:00Z",
-                "url": "https://example.test/additional-2",
-            },
-            {
-                "body": audit_body(
-                    {"type": "low_confidence_opt_in", "cycle": 2},
-                    "### Added Findings\n"
-                    "1. Restart opt-in — `src/opt_in.py` "
-                    "(low-confidence reviewer: correctness-reviewer)\n",
-                ),
-                "createdAt": "2026-01-02T00:02:00Z",
-                "url": "https://example.test/opt-in-2",
-            },
-        ],
+    exit_code = rc.main(
+        ["9", "--repo-dir", str(tmp_path), "--comments-json", str(GITHUB_V2)]
     )
-
-    result = runner.invoke(
-        module.app,
-        [
-            "100",
-            "--platform",
-            "github",
-            "--comments-json",
-            str(comments_json),
-            "--scratch-dir",
-            str(scratch_dir),
-            "--json-summary",
-        ],
-    )
-
-    assert result.exit_code == 0
-    summary = json.loads(result.output)
-    assert summary["latest_cycle"] == 2
-    assert summary["next_cycle"] == 3
-    assert summary["latest_review"]["url"] == "https://example.test/review-2"
-    assert summary["latest_fix_validation"] is None
-    assert summary["cycle_gaps"] == [
-        {"cycle": 2, "reason": "missing fix-validation comment"}
-    ]
-    assert summary["current_cycle_additional_acceptances"] == [
-        {
-            "severity": "MEDIUM",
-            "title": "Accepted restart finding",
-            "file": "src/accepted.py",
-            "cycle": 2,
-            "comment_type": "additional_acceptance",
-            "comment_url": "https://example.test/additional-2",
-        }
-    ]
-    assert summary["current_cycle_low_confidence_opt_ins"] == [
-        {
-            "title": "Restart opt-in",
-            "file": "src/opt_in.py",
-            "source": "low-confidence reviewer: correctness-reviewer",
-            "cycle": 2,
-            "comment_type": "low_confidence_opt_in",
-            "comment_url": "https://example.test/opt-in-2",
-        }
-    ]
-
-    review_path = Path(summary["scratch_paths"]["latest_review"])
-    assert review_path.read_text(encoding="utf-8") == (
-        "### Quality Score: 73/100\n\nLatest review details.\n"
-    )
-    assert "latest_fix_validation" not in summary["scratch_paths"]
-    assert "summary" not in summary["scratch_paths"]
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert output.startswith("# RECOVERED_CONTEXT")
+    assert "**Next cycle:** 03" in output
+    # tmp_path is not a git repo, so the recorded SHA cannot be an ancestor.
+    assert "**Scope basis:** full-diff" in output
 
 
-def test_resolves_gitlab_note_comments_with_fix_validation(
-    tmp_path: Path,
+def test_cli_reports_a_fetch_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "gitlab-comments.json"
-    scratch_dir = tmp_path / "scratch"
-    write_comments(
-        comments_json,
-        [
-            {
-                "note": audit_body(
-                    {"type": "review", "cycle": 4, "status": "passing", "score": 88},
-                    "### ✅ Review\n\n### Summary\n- GitLab review summary\n\n"
-                    "<details>\n<summary>Full consensus review</summary>\n\n"
-                    "GitLab latest review.\n\n</details>\n",
-                ),
-                "created_at": "2026-01-04T00:00:00Z",
-                "web_url": "https://gitlab.example.test/review-4",
-                "author": {"username": "bot"},
-            },
-            {
-                "note": audit_body(
-                    {"type": "fix_validation", "cycle": 4, "status": "clean"},
-                    "### Review Findings Fixed\n\n### Summary\n- GitLab fix summary\n\n"
-                    "<details>\n<summary>Full fix log</summary>\n\n"
-                    "GitLab fix log.\n\n</details>\n",
-                ),
-                "created_at": "2026-01-04T00:03:00Z",
-                "web_url": "https://gitlab.example.test/fix-4",
-            },
-        ],
-    )
-
-    result = runner.invoke(
-        module.app,
-        [
-            "200",
-            "--platform",
-            "gitlab",
-            "--comments-json",
-            str(comments_json),
-            "--scratch-dir",
-            str(scratch_dir),
-            "--json-summary",
-        ],
-    )
-
-    assert result.exit_code == 0
-    summary = json.loads(result.output)
-    assert summary["platform"] == "gitlab"
-    assert summary["latest_cycle"] == 4
-    assert summary["cycle_gaps"] == []
-    assert (
-        summary["latest_fix_validation"]["url"] == "https://gitlab.example.test/fix-4"
-    )
-    assert (
-        Path(summary["scratch_paths"]["latest_review"]).read_text(encoding="utf-8")
-        == "GitLab latest review.\n"
-    )
-    assert (
-        Path(summary["scratch_paths"]["latest_fix_validation"]).read_text(
-            encoding="utf-8"
-        )
-        == "GitLab fix log.\n"
-    )
-
-
-def test_first_cycle_gitlab_label(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(comments_json, [])
-
-    result = runner.invoke(
-        module.app,
-        ["456", "--platform", "gitlab", "--comments-json", str(comments_json)],
-    )
-
-    assert result.exit_code == 0
-    assert "Next cycle:** 01" in result.output
-    assert "MR 456" in result.output
-    assert "Platform:** gitlab" in result.output
-
-
-def test_platform_default_when_env_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(comments_json, [])
-    monkeypatch.chdir(tmp_path)
-
-    result = runner.invoke(module.app, ["999", "--comments-json", str(comments_json)])
-
-    assert result.exit_code == 0
-    assert "Platform:** github" in result.output
-
-
-def _rouge_context_body(
-    spec_text: str | None = None,
-    plan_text: str | None = None,
-    has_spec: bool | None = None,
-    has_plan: bool | None = None,
-) -> str:
-    payload = json.dumps(
-        {
-            "has_plan": has_plan if has_plan is not None else bool(plan_text),
-            "has_spec": has_spec if has_spec is not None else bool(spec_text),
-            "schema_version": 1,
-            "type": "planning_context",
-        },
-        sort_keys=True,
-    )
-    parts = [f"<!-- review-context\n{payload}\n-->\n## Planning Context\n"]
-    if spec_text:
-        parts.append(
-            f"<details>\n<summary>Spec</summary>\n\n{spec_text}\n\n</details>\n"
-        )
-    if plan_text:
-        parts.append(
-            f"<details>\n<summary>Plan</summary>\n\n{plan_text}\n\n</details>\n"
-        )
-    return "\n".join(parts)
-
-
-def test_extract_planning_context_with_spec_and_plan() -> None:
-    module = load_recover_context()
-    spec = "Do X, Y, and Z."
-    plan = "1. Implement X\n2. Implement Y"
-    raw = [
-        {
-            "body": _rouge_context_body(spec_text=spec, plan_text=plan),
-            "createdAt": "2026-01-01T00:00:00Z",
-            "url": "https://example.test/context",
-        },
-        {"body": "ordinary comment", "createdAt": "2026-01-01T00:01:00Z"},
-    ]
-
-    result = module.extract_planning_context(raw)
-
-    assert result is not None
-    assert result["spec"] == spec
-    assert result["plan"] == plan
-    assert result["url"] == "https://example.test/context"
-    assert result["has_spec"] is True
-    assert result["has_plan"] is True
-    assert result["schema_version"] == 1
-
-
-def test_extract_planning_context_spec_only() -> None:
-    module = load_recover_context()
-    spec = "Build the widget."
-    raw = [
-        {
-            "body": _rouge_context_body(spec_text=spec),
-            "createdAt": "2026-01-01T00:00:00Z",
-            "url": "https://example.test/ctx",
-        }
-    ]
-
-    result = module.extract_planning_context(raw)
-
-    assert result is not None
-    assert result["spec"] == spec
-    assert result["plan"] is None
-    assert result["has_spec"] is True
-    assert result["has_plan"] is False
-
-
-def test_extract_planning_context_returns_none_when_absent() -> None:
-    module = load_recover_context()
-    raw = [
-        {"body": "ordinary comment", "createdAt": "2026-01-01T00:00:00Z"},
-        {
-            "body": audit_body(
-                {"type": "review", "cycle": 1, "status": "clean", "score": 100},
-                "### Summary\n- Clean.\n",
-            ),
-            "createdAt": "2026-01-01T00:01:00Z",
-        },
-    ]
-
-    assert module.extract_planning_context(raw) is None
-
-
-def test_extract_planning_context_ignores_wrong_schema_version() -> None:
-    module = load_recover_context()
-    bad_payload = json.dumps({"schema_version": 2, "type": "planning_context"})
-    body = f"<!-- review-context\n{bad_payload}\n-->\n## Planning Context\n"
-    raw = [{"body": body, "createdAt": "2026-01-01T00:00:00Z"}]
-
-    assert module.extract_planning_context(raw) is None
-
-
-def test_json_summary_includes_planning_context(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    spec = "Build the widget."
-    write_comments(
-        comments_json,
-        [
-            {
-                "body": _rouge_context_body(spec_text=spec),
-                "createdAt": "2026-01-01T00:00:00Z",
-                "url": "https://example.test/ctx",
-            }
-        ],
-    )
-
-    result = runner.invoke(
-        module.app,
-        [
-            "123",
-            "--platform",
-            "github",
-            "--comments-json",
-            str(comments_json),
-            "--json-summary",
-        ],
-    )
-
-    assert result.exit_code == 0
-    summary = json.loads(result.output)
-    assert summary["planning_context"] is not None
-    assert summary["planning_context"]["spec"] == spec
-    assert summary["planning_context"]["plan"] is None
-    assert summary["planning_context"]["url"] == "https://example.test/ctx"
-
-
-def test_json_summary_planning_context_none_when_absent(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(comments_json, [])
-
-    result = runner.invoke(
-        module.app,
-        [
-            "123",
-            "--platform",
-            "github",
-            "--comments-json",
-            str(comments_json),
-            "--json-summary",
-        ],
-    )
-
-    assert result.exit_code == 0
-    summary = json.loads(result.output)
-    assert summary["planning_context"] is None
-
-
-def test_build_context_output_includes_planning_context(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    spec = "Build the thing."
-    plan = "1. Step A\n2. Step B"
-    write_comments(
-        comments_json,
-        [
-            {
-                "body": _rouge_context_body(spec_text=spec, plan_text=plan),
-                "createdAt": "2026-01-01T00:00:00Z",
-                "url": "https://example.test/ctx",
-            }
-        ],
-    )
-
-    result = runner.invoke(
-        module.app,
-        ["123", "--platform", "github", "--comments-json", str(comments_json)],
-    )
-
-    assert result.exit_code == 0
-    assert "Planning Context" in result.output
-    assert spec in result.output
-    assert plan in result.output
-    assert "Source Specification" in result.output
-    assert "Implementation Plan" in result.output
-
-
-def test_build_context_output_shows_not_found_when_no_context(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(comments_json, [])
-
-    result = runner.invoke(
-        module.app,
-        ["123", "--platform", "github", "--comments-json", str(comments_json)],
-    )
-
-    assert result.exit_code == 0
-    assert "Planning Context" in result.output
-    assert "Not found." in result.output
-
-
-def _recommendations_body(
-    *,
-    cycle: int,
-    acceptance_lines: list[str],
-    opt_in_lines: list[str],
-) -> str:
-    acceptance_text = "\n".join(acceptance_lines) if acceptance_lines else "None."
-    opt_in_text = "\n".join(opt_in_lines) if opt_in_lines else "None."
-    visible = (
-        "### Review Recommendations\n\n"
-        f"*Cycle: {cycle:02d}*\n\n"
-        "---\n\n"
-        "### Recommended for Acceptance\n\n"
-        f"{acceptance_text}\n\n"
-        "### Recommended for Opt-In\n\n"
-        f"{opt_in_text}\n\n"
-        "These recommendations are advisory.\n"
-    )
-    return audit_body({"type": "recommendations", "cycle": cycle}, visible)
-
-
-def test_parse_recommendations_acceptance_and_opt_in_sections() -> None:
-    module = load_recover_context()
-    body = _recommendations_body(
-        cycle=2,
-        acceptance_lines=[
-            "1. [F-3] [HIGH] Dead variable in _run_json"
-            " — `scripts/recover_context.py:228`",
-            "2. [F-5] [MEDIUM] Defensive null check — `src/service.py:42`",
-        ],
-        opt_in_lines=[
-            "1. [F-7] [LOW] Stale comment reference — `src/util.py:12`",
-        ],
-    )
-
-    acceptance = module._parse_acceptance_recommendations(body)
-    opt_in = module._parse_opt_in_recommendations(body)
-
-    assert acceptance == [
-        {
-            "review_number": "3",
-            "severity": "HIGH",
-            "title": "Dead variable in _run_json",
-            "file": "scripts/recover_context.py:228",
-        },
-        {
-            "review_number": "5",
-            "severity": "MEDIUM",
-            "title": "Defensive null check",
-            "file": "src/service.py:42",
-        },
-    ]
-    assert opt_in == [
-        {
-            "review_number": "7",
-            "severity": "LOW",
-            "title": "Stale comment reference",
-            "file": "src/util.py:12",
-        },
-    ]
-
-
-def test_resolve_recommendations_filters_to_latest_cycle(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    scratch_dir = tmp_path / "scratch"
-    write_comments(
-        comments_json,
-        [
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 1, "status": "passing", "score": 86},
-                    "### Summary\n- cycle 1\n",
-                ),
-                "createdAt": "2026-01-01T00:00:00Z",
-                "url": "https://example.test/review-1",
-            },
-            {
-                "body": _recommendations_body(
-                    cycle=1,
-                    acceptance_lines=[
-                        "1. [F-1] [HIGH] Old acceptance — `src/old.py`",
-                    ],
-                    opt_in_lines=[
-                        "1. [F-2] [LOW] Old opt-in — `src/old.py`",
-                    ],
-                ),
-                "createdAt": "2026-01-01T00:01:00Z",
-                "url": "https://example.test/recs-1",
-            },
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 2, "status": "failing", "score": 73},
-                    "### Summary\n- cycle 2\n",
-                ),
-                "createdAt": "2026-01-02T00:00:00Z",
-                "url": "https://example.test/review-2",
-            },
-            {
-                "body": _recommendations_body(
-                    cycle=2,
-                    acceptance_lines=[
-                        "1. [F-3] [MEDIUM] New acceptance — `src/new.py`",
-                    ],
-                    opt_in_lines=[
-                        "1. [F-4] [LOW] New opt-in — `src/new.py`",
-                    ],
-                ),
-                "createdAt": "2026-01-02T00:01:00Z",
-                "url": "https://example.test/recs-2",
-            },
-        ],
-    )
-
-    result = runner.invoke(
-        module.app,
-        [
-            "100",
-            "--platform",
-            "github",
-            "--comments-json",
-            str(comments_json),
-            "--scratch-dir",
-            str(scratch_dir),
-            "--json-summary",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    summary = json.loads(result.output)
-    # Only cycle-2 recommendations are surfaced as current; cycle-1 are not
-    # auto-applied (informational only).
-    assert summary["current_cycle_acceptance_recommendations"] == [
-        {
-            "review_number": "3",
-            "severity": "MEDIUM",
-            "title": "New acceptance",
-            "file": "src/new.py",
-            "cycle": 2,
-            "comment_type": "recommendations",
-            "comment_url": "https://example.test/recs-2",
-        }
-    ]
-    assert summary["current_cycle_opt_in_recommendations"] == [
-        {
-            "review_number": "4",
-            "severity": "LOW",
-            "title": "New opt-in",
-            "file": "src/new.py",
-            "cycle": 2,
-            "comment_type": "recommendations",
-            "comment_url": "https://example.test/recs-2",
-        }
-    ]
-    assert summary["source_comment_urls"]["recommendations"] == [
-        "https://example.test/recs-1",
-        "https://example.test/recs-2",
-    ]
-    acceptance_path = Path(
-        summary["scratch_paths"]["current_cycle_acceptance_recommendations"]
-    )
-    opt_in_path = Path(summary["scratch_paths"]["current_cycle_opt_in_recommendations"])
-    assert acceptance_path.name == "acceptance-recommendations-02.md"
-    assert opt_in_path.name == "opt-in-recommendations-02.md"
-    assert (
-        acceptance_path.read_text(encoding="utf-8")
-        == "1. [F-3] [MEDIUM] New acceptance — `src/new.py`\n"
-    )
-    assert (
-        opt_in_path.read_text(encoding="utf-8")
-        == "1. [F-4] [LOW] New opt-in — `src/new.py`\n"
-    )
-
-
-def test_resolve_no_recommendations_returns_empty_lists(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(
-        comments_json,
-        [
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 1, "status": "passing", "score": 86},
-                    "### Summary\n- cycle 1\n",
-                ),
-                "createdAt": "2026-01-01T00:00:00Z",
-            },
-        ],
-    )
-
-    result = runner.invoke(
-        module.app,
-        [
-            "100",
-            "--platform",
-            "github",
-            "--comments-json",
-            str(comments_json),
-            "--json-summary",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    summary = json.loads(result.output)
-    assert summary["current_cycle_acceptance_recommendations"] == []
-    assert summary["current_cycle_opt_in_recommendations"] == []
-    assert summary["source_comment_urls"]["recommendations"] == []
-
-
-def test_older_recommendations_surfaced_as_historical_only(tmp_path: Path) -> None:
-    module = load_recover_context()
-    runner = CliRunner()
-    comments_json = tmp_path / "comments.json"
-    write_comments(
-        comments_json,
-        [
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 1, "status": "failing", "score": 70},
-                    "### Summary\n- cycle 1\n",
-                ),
-                "createdAt": "2026-01-01T00:00:00Z",
-            },
-            {
-                "body": _recommendations_body(
-                    cycle=1,
-                    acceptance_lines=[
-                        "1. [F-1] [HIGH] Older acceptance — `src/older.py`",
-                    ],
-                    opt_in_lines=[],
-                ),
-                "createdAt": "2026-01-01T00:01:00Z",
-                "url": "https://example.test/older-recs",
-            },
-            {
-                "body": audit_body(
-                    {"type": "review", "cycle": 2, "status": "failing", "score": 75},
-                    "### Summary\n- cycle 2\n",
-                ),
-                "createdAt": "2026-01-02T00:00:00Z",
-            },
-        ],
-    )
-
-    # Markdown context output should include historical recommendations and
-    # advisory framing, but the JSON summary should NOT auto-promote the
-    # older comment into the current-cycle lists.
-    md_result = runner.invoke(
-        module.app,
-        [
-            "100",
-            "--platform",
-            "github",
-            "--comments-json",
-            str(comments_json),
-        ],
-    )
-    assert md_result.exit_code == 0, md_result.output
-    assert "Review Recommendations (Historical)" in md_result.output
-    assert "Older acceptance" in md_result.output
-    assert "advisory" in md_result.output
-
-    json_result = runner.invoke(
-        module.app,
-        [
-            "100",
-            "--platform",
-            "github",
-            "--comments-json",
-            str(comments_json),
-            "--json-summary",
-        ],
-    )
-    assert json_result.exit_code == 0, json_result.output
-    summary = json.loads(json_result.output)
-    assert summary["latest_cycle"] == 2
-    assert summary["current_cycle_acceptance_recommendations"] == []
-    assert summary["current_cycle_opt_in_recommendations"] == []
-
-
-def test_recommendations_round_trip_no_phantom_entries(tmp_path: Path) -> None:
-    """Round-trip test: rendered template body must not produce phantom entries.
-
-    The recommendations-comment template embeds FORMAT RULE example lines
-    inside HTML comments. Those comments must be stripped before parsing so
-    that only the real findings supplied by the caller are returned.
-    """
-    rc_module = load_recover_context()
-    prc_module = load_post_review_comment_for_recover()
-
-    # Write real findings files (one acceptance, one opt-in)
-    acceptance_file = tmp_path / "acceptance-recs.md"
-    acceptance_file.write_text(
-        "1. [F-2] [HIGH] Missing input validation — `src/api/handler.py:42`\n"
-    )
-    opt_in_file = tmp_path / "opt-in-recs.md"
-    opt_in_file.write_text(
-        "1. [F-9] [LOW] Stale comment reference — `src/util.py:12`\n"
-    )
-
-    # Render via the real template (includes HTML FORMAT RULE comment blocks)
-    body = prc_module.build_recommendations_comment_body(
-        cycle=1,
-        acceptance_findings_file=str(acceptance_file),
-        opt_in_findings_file=str(opt_in_file),
-    )
-
-    # Parse the rendered body — must return only the real findings
-    acceptance_parsed = rc_module._parse_acceptance_recommendations(body)
-    opt_in_parsed = rc_module._parse_opt_in_recommendations(body)
-
-    assert acceptance_parsed == [
-        {
-            "review_number": "2",
-            "severity": "HIGH",
-            "title": "Missing input validation",
-            "file": "src/api/handler.py:42",
-        }
-    ], f"Expected exactly one acceptance entry, got: {acceptance_parsed}"
-
-    assert opt_in_parsed == [
-        {
-            "review_number": "9",
-            "severity": "LOW",
-            "title": "Stale comment reference",
-            "file": "src/util.py:12",
-        }
-    ], f"Expected exactly one opt-in entry, got: {opt_in_parsed}"
-
-    # Also verify "None." case returns empty lists
-    none_acceptance_file = tmp_path / "acceptance-none.md"
-    none_acceptance_file.write_text("None.\n")
-    none_opt_in_file = tmp_path / "opt-in-none.md"
-    none_opt_in_file.write_text("None.\n")
-
-    none_body = prc_module.build_recommendations_comment_body(
-        cycle=1,
-        acceptance_findings_file=str(none_acceptance_file),
-        opt_in_findings_file=str(none_opt_in_file),
-    )
-
-    assert rc_module._parse_acceptance_recommendations(none_body) == []
-    assert rc_module._parse_opt_in_recommendations(none_body) == []
+    def fake_fetch(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        raise subprocess.CalledProcessError(1, ["gh"], "", "not authenticated")
+
+    monkeypatch.setattr(rc, "fetch_platform_comments", fake_fetch)
+    assert rc.main(["9", "--repo-dir", str(tmp_path)]) == 1
+    assert "failed to recover PR/MR comments" in capsys.readouterr().err

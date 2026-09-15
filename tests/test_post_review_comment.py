@@ -1,609 +1,358 @@
-import importlib.util
+"""Tests for the consensus-review comment renderer and publisher."""
+
+import json
+import subprocess
 from pathlib import Path
-from types import ModuleType
+from typing import Any
 
+import post_review_comment as prc
 import pytest
-from typer.testing import CliRunner
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "plugins/v8ch/skills/consensus-review/scripts/post_review_comment.py"
+from tests.consensus_review_support import FIXTURES_DIR
+
+REPORT = (FIXTURES_DIR / "sample-report.md").read_text(encoding="utf-8").strip()
+SUMMARY_LINES = [
+    line
+    for line in (FIXTURES_DIR / "summary.md").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+
+BASE_METADATA: dict[str, Any] = {
+    "cycle": 1,
+    "status": "passing",
+    "score": 88,
+    "delegation_mode": "parallel-subagents",
+    "plan_source": "none",
+    "reviewed_sha": "abc1234",
+    "scope_basis": "full-diff",
+    "files_touched": 2,
+    "findings_opened": 2,
+    "findings_closed": 0,
+}
+
+
+def metadata(**overrides: Any) -> dict[str, object]:
+    values = {**BASE_METADATA, **overrides}
+    return prc.build_metadata(**values)
+
+
+# --- platform detection ----------------------------------------------------
+
+
+def test_read_platform_defaults_to_github(tmp_path: Path) -> None:
+    assert prc.read_platform_from_env(tmp_path) == "github"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("DEV_SEC_OPS_PLATFORM=gitlab\n", "gitlab"),
+        ('DEV_SEC_OPS_PLATFORM="gitlab"\n', "gitlab"),
+        ("DEV_SEC_OPS_PLATFORM=GitLab\n", "gitlab"),
+        ("DEV_SEC_OPS_PLATFORM=github\n", "github"),
+        ("OTHER=1\n", "github"),
+    ],
 )
+def test_read_platform_from_env(tmp_path: Path, line: str, expected: str) -> None:
+    (tmp_path / ".env").write_text(line, encoding="utf-8")
+    assert prc.read_platform_from_env(tmp_path) == expected
 
 
-def load_post_review_comment() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("post_review_comment", SCRIPT_PATH)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+# --- metadata validation (contract C-5) ------------------------------------
 
 
-def test_read_platform_default_when_env_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_metadata_has_exactly_the_contract_key_set() -> None:
+    assert set(metadata()) == {
+        "cycle",
+        "delegation_mode",
+        "files_touched",
+        "findings_closed",
+        "findings_opened",
+        "plan_source",
+        "reviewed_sha",
+        "schema_version",
+        "scope_basis",
+        "score",
+        "status",
+        "type",
+    }
+
+
+def test_metadata_block_is_sorted_and_compact() -> None:
+    block = prc.build_metadata_block(metadata())
+    assert block.startswith("<!-- consensus-review\n")
+    assert block.endswith("\n-->")
+    encoded = block.split("\n")[1]
+    assert " " not in encoded
+    assert list(json.loads(encoded)) == sorted(json.loads(encoded))
+    assert json.loads(encoded)["schema_version"] == 2
+
+
+def test_metadata_rejects_an_extra_key() -> None:
+    payload = dict(metadata())
+    payload["extra"] = 1
+    with pytest.raises(prc.ContractError, match="key set mismatch"):
+        prc.validate_metadata(payload)
+
+
+def test_metadata_rejects_a_missing_key() -> None:
+    payload = dict(metadata())
+    del payload["scope_basis"]
+    with pytest.raises(prc.ContractError, match="key set mismatch"):
+        prc.validate_metadata(payload)
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"cycle": 0}, "cycle must be an integer"),
+        ({"score": 0}, "score must be an integer"),
+        ({"score": 101}, "score must be an integer"),
+        ({"status": "unknown"}, "status must be one of"),
+        ({"delegation_mode": "solo"}, "delegation_mode must be one of"),
+        ({"plan_source": "   "}, "plan_source must be a non-empty"),
+        ({"reviewed_sha": "ABC1234"}, "reviewed_sha must be"),
+        ({"reviewed_sha": "abc"}, "reviewed_sha must be"),
+        ({"scope_basis": "delta"}, "scope_basis must be"),
+        ({"files_touched": -1}, "files_touched must be"),
+        ({"findings_opened": -1}, "findings_opened must be"),
+        ({"findings_closed": -1}, "findings_closed must be"),
+    ],
+)
+def test_metadata_value_types_are_enforced(
+    override: dict[str, Any], message: str
 ) -> None:
-    module = load_post_review_comment()
-    monkeypatch.chdir(tmp_path)
-    assert module.read_platform_from_env() == "github"
+    with pytest.raises(prc.ContractError, match=message):
+        metadata(**override)
 
 
-def test_read_platform_github(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = load_post_review_comment()
-    (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=github\n")
-    monkeypatch.chdir(tmp_path)
-    assert module.read_platform_from_env() == "github"
-
-
-def test_read_platform_gitlab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = load_post_review_comment()
-    (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=gitlab\n")
-    monkeypatch.chdir(tmp_path)
-    assert module.read_platform_from_env() == "gitlab"
-
-
-def test_read_platform_handles_quoted_values(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_post_review_comment()
-    (tmp_path / ".env").write_text('DEV_SEC_OPS_PLATFORM="gitlab"\n')
-    monkeypatch.chdir(tmp_path)
-    assert module.read_platform_from_env() == "gitlab"
-
-
-def test_read_platform_case_insensitive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_post_review_comment()
-    (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=GitLab\n")
-    monkeypatch.chdir(tmp_path)
-    assert module.read_platform_from_env() == "gitlab"
-
-
-def test_read_platform_uses_repo_dir(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    repo_dir = tmp_path / "repo"
-    repo_dir.mkdir()
-    (repo_dir / ".env").write_text("DEV_SEC_OPS_PLATFORM=gitlab\n")
-    assert module.read_platform_from_env(repo_dir) == "gitlab"
-
-
-def test_get_status_explicit_wins() -> None:
-    module = load_post_review_comment()
-    assert module.get_status("clean", False) == "clean"
-    assert module.get_status("failing", True) == "failing"
-    assert module.get_status("passing", True) == "passing"
-
-
-def test_get_status_is_clean_fallback() -> None:
-    module = load_post_review_comment()
-    assert module.get_status(None, True) == "clean"
-    assert module.get_status(None, False) == "failing"
-
-
-def test_build_summary_lines_filters_blank(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    summary = tmp_path / "summary.md"
-    summary.write_text("- First\n\n- Second\n\n  \n- Third\n")
-    lines = module.build_summary_lines(str(summary))
-    assert lines == ["- First", "- Second", "- Third"]
-
-
-def test_infer_comment_type_from_filename(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    review = tmp_path / "review-03.md"
-    review.write_text("x")
-    fix_log = tmp_path / "fix-03.md"
-    fix_log.write_text("x")
-    assert module.infer_comment_type(None, str(review)) == "review"
-    assert module.infer_comment_type(None, str(fix_log)) == "fix_validation"
-
-
-def test_build_review_comment_body_uses_review_template(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    summary = tmp_path / "summary.md"
-    summary.write_text("- All good\n")
-
-    body = module.build_review_comment_body(
-        "## Consensus Review Report\n\n### Quality Score: 92/100\n\n## Review body",
-        comment_type="review",
-        status="clean",
-        summary_file=str(summary),
-        cycle=3,
+def test_metadata_accepts_a_supplied_plan_source_and_delta_scope() -> None:
+    payload = metadata(
+        plan_source="supplied: .plan/feature.md", scope_basis="delta-since:abc1234"
     )
-
-    assert body.startswith("<!-- consensus-review")
-    assert '"type":"review"' in body
-    assert '"cycle":3' in body
-    assert '"score":92' in body
-    assert "### ✅ Review" in body
-    assert "*Cycle: 03*" in body
-    assert "*Score: 92*" in body
-    assert "### Summary" in body
-    assert "- All good" in body
-    assert "<summary>Full consensus review</summary>" in body
-    assert "## Review body" in body
-    assert "${" not in body
+    assert payload["plan_source"] == "supplied: .plan/feature.md"
+    assert payload["scope_basis"] == "delta-since:abc1234"
 
 
-def test_build_review_comment_body_requires_or_derives_score(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    summary = tmp_path / "summary.md"
-    summary.write_text("- All good\n")
+# --- summary shape ---------------------------------------------------------
 
-    with pytest.raises(Exception, match="Review comments require a raw score"):
-        module.build_review_comment_body(
-            "## Review body",
-            comment_type="review",
-            status="clean",
-            summary_file=str(summary),
-            cycle=3,
+
+@pytest.mark.parametrize("count", [1, 2, 3])
+def test_summary_accepts_one_to_three_bullets(tmp_path: Path, count: int) -> None:
+    path = tmp_path / "summary.md"
+    path.write_text("\n".join(f"- bullet {i}" for i in range(count)), encoding="utf-8")
+    assert len(prc.build_summary_lines(path)) == count
+
+
+@pytest.mark.parametrize("count", [0, 4])
+def test_summary_rejects_any_other_count(tmp_path: Path, count: int) -> None:
+    path = tmp_path / "summary.md"
+    path.write_text("\n".join(f"- bullet {i}" for i in range(count)), encoding="utf-8")
+    with pytest.raises(prc.ContractError):
+        prc.build_summary_lines(path)
+
+
+def test_missing_summary_file_is_a_contract_error(tmp_path: Path) -> None:
+    with pytest.raises(prc.ContractError, match="Failed to read summary"):
+        prc.build_summary_lines(tmp_path / "absent.md")
+
+
+# --- body rendering --------------------------------------------------------
+
+
+def test_body_starts_with_metadata_then_renders_the_template() -> None:
+    body = prc.build_review_comment_body(
+        REPORT, summary_lines=SUMMARY_LINES, metadata=metadata()
+    )
+    assert body.startswith("<!-- consensus-review\n")
+    assert "### 🟡 Consensus Review — Cycle 01" in body
+    assert "*Score: 88/100 — Passing*" in body
+    assert (
+        "Delegation: parallel-subagents. Plan: none. "
+        "Scope: full-diff. Reviewed: abc1234." in body
+    )
+    assert "<summary>Evidence and full findings</summary>" in body
+    assert REPORT in body
+
+
+@pytest.mark.parametrize(
+    ("status", "icon"),
+    [("clean", "✅"), ("passing", "🟡"), ("failing", "❌")],
+)
+def test_status_icon_follows_the_status(status: str, icon: str) -> None:
+    score = {"clean": 96, "passing": 88, "failing": 70}[status]
+    body = prc.build_review_comment_body(
+        REPORT,
+        summary_lines=SUMMARY_LINES,
+        metadata=metadata(status=status, score=score),
+    )
+    assert f"### {icon} Consensus Review" in body
+
+
+def test_body_requires_a_quality_score_heading() -> None:
+    with pytest.raises(prc.ContractError, match="Quality Score"):
+        prc.build_review_comment_body(
+            "### Evidence\n\n- **Files examined:** a\n- **Commands run:** none",
+            summary_lines=SUMMARY_LINES,
+            metadata=metadata(),
         )
 
 
-def test_build_fix_validation_comment_body_uses_fix_template(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    summary = tmp_path / "fix-summary.md"
-    summary.write_text("- Fix Validation — Cycle 03: 1 of 2 findings unresolved.\n")
-
-    body = module.build_review_comment_body(
-        "## Status Table",
-        comment_type="fix_validation",
-        status="failing",
-        summary_file=str(summary),
-        cycle=3,
+def test_body_requires_a_non_empty_evidence_section() -> None:
+    report = REPORT.replace(
+        "- **Files examined:** AGENTS.md, CODING_STANDARDS.md, "
+        "src/api/handler.py, tests/test_handler.py\n"
+        "- **Commands run:** uv run ruff check ., uv run mypy ., uv run pytest",
+        "",
     )
-
-    assert "### Review Findings Fixed" in body
-    assert "*Cycle: 03*" in body
-    assert "Adjusted Score" not in body
-    assert "<summary>Full fix log</summary>" in body
-    assert "## Status Table" in body
-    assert "${" not in body
+    with pytest.raises(prc.ContractError, match="Evidence"):
+        prc.build_review_comment_body(
+            report, summary_lines=SUMMARY_LINES, metadata=metadata()
+        )
 
 
-def test_build_acceptance_comment_body_uses_acceptance_template(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    findings = tmp_path / "findings.md"
-    findings.write_text("1. [MEDIUM] Keep defensive guard — `foo.py`\n")
-    body = module.build_findings_comment_body(
-        comment_type="acceptance",
-        cycle=2,
-        findings_file=str(findings),
-        before_score=88,
-        after_score=93,
-    )
-
-    assert body.startswith("<!-- consensus-review")
-    assert '"type":"acceptance"' in body
-    assert '"before_score":88' in body
-    assert '"after_score":93' in body
-    assert "### Review Findings Accepted: Agent Reviewer" in body
-    assert "*Cycle: 02*" in body
-    assert "*Initial Score: 88*" in body
-    assert "*Adjusted Score: 93*" in body
-    assert "### Accepted Findings" in body
-    assert "1. [MEDIUM] Keep defensive guard — `foo.py`" in body
-    assert "- Raw score: 88/100" in body
-    assert "- Adjusted score: 93/100" in body
-    assert "${" not in body
+def test_body_rejects_a_nested_details_block() -> None:
+    report = REPORT + "\n\n<details>\n<summary>extra</summary>\nhidden\n</details>"
+    with pytest.raises(prc.ContractError, match="nested <details>"):
+        prc.build_review_comment_body(
+            report, summary_lines=SUMMARY_LINES, metadata=metadata()
+        )
 
 
-def test_build_additional_acceptance_comment_body_uses_template(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    findings = tmp_path / "findings.md"
-    findings.write_text("1. [LOW] Leave telemetry hook — `bar.py`\n")
-    body = module.build_findings_comment_body(
-        comment_type="additional_acceptance",
-        cycle=4,
-        findings_file=str(findings),
-        before_score=90,
-        after_score=94,
-    )
-
-    assert "### Review Findings Accepted: Human Reviewer" in body
-    assert "*Cycle: 04*" in body
-    assert "*Initial Score: 90*" in body
-    assert "*Adjusted Score: 94*" in body
-    assert "### Accepted Findings" in body
-    assert "- Score before additional acceptance: 90/100" in body
-    assert "- Score after additional acceptance: 94/100" in body
-    assert "${" not in body
+def test_extract_evidence_returns_the_merged_section() -> None:
+    evidence = prc.extract_evidence(REPORT)
+    assert "Files examined" in evidence
+    assert "Commands run" in evidence
+    assert "Must Fix" not in evidence
 
 
-def test_build_low_confidence_opt_in_comment_body_uses_template(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    findings = tmp_path / "opted-in.md"
-    findings.write_text(
-        "1. Missing retry fallback — `worker.py` "
-        "(low-confidence reviewer: correctness-reviewer)\n"
-    )
-
-    body = module.build_findings_comment_body(
-        comment_type="low_confidence_opt_in",
-        cycle=6,
-        findings_file=str(findings),
-        before_score=None,
-        after_score=None,
-    )
-
-    assert "### Informational Review Findings Added" in body
-    assert "*Cycle: 06*" in body
-    assert "Adjusted Score" not in body
-    assert "### Added Findings" in body
-    assert "Missing retry fallback" in body
-    assert (
-        "These low-confidence findings were explicitly opted in for fixing this "
-        "cycle." in body
-    )
-    assert "${" not in body
+# --- transport -------------------------------------------------------------
 
 
-def test_main_fails_on_empty_review_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_post_review_comment()
+def test_post_comment_github_invokes_gh(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        calls.append({"command": command, "kwargs": kwargs})
+
+    monkeypatch.setattr(prc, "GH", "/usr/bin/gh")
+    monkeypatch.setattr(prc.subprocess, "run", fake_run)
+    prc.post_comment(7, "body text", platform="github", repo_dir="/repo")
+
+    assert calls[0]["command"] == [
+        "/usr/bin/gh",
+        "pr",
+        "comment",
+        "7",
+        "--body",
+        "body text",
+    ]
+    assert calls[0]["kwargs"]["cwd"] == "/repo"
+    assert calls[0]["kwargs"]["check"] is True
+
+
+def test_post_comment_gitlab_invokes_glab(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        calls.append(command)
+
+    monkeypatch.setattr(prc, "GLAB", "/usr/bin/glab")
+    monkeypatch.setattr(prc.subprocess, "run", fake_run)
+    prc.post_comment(7, "body text", platform="gitlab", repo_dir="/repo")
+
+    assert calls[0] == [
+        "/usr/bin/glab",
+        "mr",
+        "note",
+        "7",
+        "--message",
+        "body text",
+    ]
+
+
+def test_post_comment_requires_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prc, "GH", None)
+    with pytest.raises(FileNotFoundError, match="gh executable"):
+        prc.post_comment(7, "body", platform="github")
+    monkeypatch.setattr(prc, "GLAB", None)
+    with pytest.raises(FileNotFoundError, match="glab executable"):
+        prc.post_comment(7, "body", platform="gitlab")
+
+
+# --- CLI -------------------------------------------------------------------
+
+
+def cli_args(tmp_path: Path, **overrides: str) -> list[str]:
     review = tmp_path / "review.md"
-    review.write_text("")
+    review.write_text(REPORT, encoding="utf-8")
     summary = tmp_path / "summary.md"
-    summary.write_text("- line\n")
-    monkeypatch.chdir(tmp_path)
+    summary.write_text("\n".join(SUMMARY_LINES), encoding="utf-8")
+    args = {
+        "--pr-number": "7",
+        "--review-file": str(review),
+        "--summary-file": str(summary),
+        "--repo-dir": str(tmp_path),
+        "--cycle": "1",
+        "--status": "passing",
+        "--delegation-mode": "parallel-subagents",
+        "--plan-source": "none",
+        "--reviewed-sha": "abc1234",
+        "--scope-basis": "full-diff",
+        "--files-touched": "2",
+        "--findings-opened": "2",
+        "--findings-closed": "0",
+    }
+    args.update(overrides)
+    return [item for pair in args.items() for item in pair]
 
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "1",
-            "--comment-type",
-            "review",
-            "--review-file",
-            str(review),
-            "--summary-file",
-            str(summary),
-        ],
-    )
-    assert result.exit_code == 1
-    assert "Review file is empty" in result.output
 
-
-def test_main_posts_github_review_happy_path(
+def test_cli_posts_the_rendered_body(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module = load_post_review_comment()
-    review = tmp_path / "review.md"
-    review.write_text(
-        "## Consensus Review Report\n\n### Quality Score: 91/100\n\n## Review body\n"
-    )
-    summary = tmp_path / "summary.md"
-    summary.write_text("- Good\n")
-    monkeypatch.chdir(tmp_path)
+    posted: list[tuple[int, str, str]] = []
 
-    captured: dict[str, object] = {}
+    def fake_post(number: int, body: str, *, platform: str, repo_dir: Any) -> None:
+        posted.append((number, body, platform))
 
-    def fake_github(pr_number: int, body: str, repo_dir: str = ".") -> None:
-        captured["pr_number"] = pr_number
-        captured["body"] = body
-        captured["repo_dir"] = repo_dir
-
-    monkeypatch.setattr(module, "post_comment_github", fake_github)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "42",
-            "--comment-type",
-            "review",
-            "--review-file",
-            str(review),
-            "--summary-file",
-            str(summary),
-            "--cycle",
-            "3",
-            "--status",
-            "clean",
-        ],
-    )
-    assert result.exit_code == 0
-    assert captured["pr_number"] == 42
-    body = captured["body"]
-    assert isinstance(body, str)
-    assert body.startswith("<!-- consensus-review")
-    assert '"status":"clean"' in body
-    assert "### ✅ Review" in body
-    assert "*Cycle: 03*" in body
-    assert "*Score: 91*" in body
-    assert "## Review body" in body
-    assert "${" not in body
+    monkeypatch.setattr(prc, "post_comment", fake_post)
+    assert prc.main(cli_args(tmp_path)) == 0
+    assert posted[0][0] == 7
+    assert posted[0][2] == "github"
+    assert '"schema_version":2' in posted[0][1]
 
 
-def test_main_posts_gitlab_acceptance_when_repo_dir_env_is_set(
+def test_cli_uses_the_env_platform(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module = load_post_review_comment()
-    findings = tmp_path / "findings.md"
-    findings.write_text("1. [HIGH] Keep migration split — `migrate.py`\n")
-    repo_dir = tmp_path / "repo"
-    repo_dir.mkdir()
-    (repo_dir / ".env").write_text("DEV_SEC_OPS_PLATFORM=gitlab\n")
-    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=gitlab\n", encoding="utf-8")
+    seen: list[str] = []
 
-    captured: dict[str, object] = {}
+    def fake_post(number: int, body: str, *, platform: str, repo_dir: Any) -> None:
+        seen.append(platform)
 
-    def fake_gitlab(pr_number: int, body: str, repo_dir: str = ".") -> None:
-        captured["pr_number"] = pr_number
-        captured["body"] = body
-        captured["repo_dir"] = repo_dir
-
-    monkeypatch.setattr(module, "post_comment_gitlab", fake_gitlab)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "7",
-            "--comment-type",
-            "acceptance",
-            "--findings-file",
-            str(findings),
-            "--repo-dir",
-            str(repo_dir),
-            "--cycle",
-            "5",
-            "--before-score",
-            "84",
-            "--after-score",
-            "89",
-        ],
-    )
-    assert result.exit_code == 0
-    assert captured["pr_number"] == 7
-    body = captured["body"]
-    assert isinstance(body, str)
-    assert "### Review Findings Accepted: Agent Reviewer" in body
-    assert "*Cycle: 05*" in body
-    assert "*Initial Score: 84*" in body
-    assert "*Adjusted Score: 89*" in body
-    assert "- Raw score: 84/100" in body
-    assert captured["repo_dir"] == str(repo_dir)
+    monkeypatch.setattr(prc, "post_comment", fake_post)
+    assert prc.main(cli_args(tmp_path)) == 0
+    assert seen == ["gitlab"]
 
 
-def test_main_posts_github_low_confidence_opt_in(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_cli_reports_a_contract_failure_without_posting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = load_post_review_comment()
-    findings = tmp_path / "opted-in.md"
-    findings.write_text(
-        "1. Missing retry fallback — `worker.py` "
-        "(low-confidence reviewer: correctness-reviewer)\n"
-    )
-    monkeypatch.chdir(tmp_path)
+    def fail_post(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("must not post")
 
-    captured: dict[str, object] = {}
-
-    def fake_github(pr_number: int, body: str, repo_dir: str = ".") -> None:
-        captured["pr_number"] = pr_number
-        captured["body"] = body
-        captured["repo_dir"] = repo_dir
-
-    monkeypatch.setattr(module, "post_comment_github", fake_github)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "11",
-            "--comment-type",
-            "low_confidence_opt_in",
-            "--findings-file",
-            str(findings),
-            "--cycle",
-            "6",
-        ],
-    )
-    assert result.exit_code == 0
-    assert captured["pr_number"] == 11
-    body = captured["body"]
-    assert isinstance(body, str)
-    assert "### Informational Review Findings Added" in body
-    assert "*Cycle: 06*" in body
-    assert "Adjusted Score" not in body
-    assert "${" not in body
+    monkeypatch.setattr(prc, "post_comment", fail_post)
+    assert prc.main(cli_args(tmp_path, **{"--cycle": "0"})) == 1
+    assert "cycle must be an integer" in capsys.readouterr().err
 
 
-def test_extract_quality_score() -> None:
-    module = load_post_review_comment()
-    review = (
-        "## Consensus Review Report\n\n"
-        "### Quality Score: 87/100\n"
-        "### Score if recommended acceptances applied: 92/100\n"
-    )
-    assert module.extract_quality_score(review) == 87
-
-
-def test_main_requires_findings_file_for_acceptance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_cli_reports_a_transport_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    module = load_post_review_comment()
-    monkeypatch.chdir(tmp_path)
+    def fake_post(*args: Any, **kwargs: Any) -> None:
+        raise subprocess.CalledProcessError(1, ["gh"])
 
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "8",
-            "--comment-type",
-            "acceptance",
-            "--before-score",
-            "80",
-            "--after-score",
-            "90",
-        ],
-    )
-    assert result.exit_code == 1
-    assert "Findings-list comments require --findings-file" in result.output
-
-
-def test_build_recommendations_comment_body_uses_template(tmp_path: Path) -> None:
-    module = load_post_review_comment()
-    acceptance = tmp_path / "acceptance-recs.md"
-    acceptance.write_text(
-        "1. [F-3] [HIGH] Dead variable in _run_json "
-        "— `scripts/recover_context.py:228`\n"
-    )
-    opt_in = tmp_path / "opt-in-recs.md"
-    opt_in.write_text("1. [F-7] [LOW] Stale comment reference — `src/util.py`\n")
-
-    body = module.build_recommendations_comment_body(
-        cycle=2,
-        acceptance_findings_file=str(acceptance),
-        opt_in_findings_file=str(opt_in),
-    )
-
-    assert body.startswith("<!-- consensus-review")
-    assert '"type":"recommendations"' in body
-    assert '"cycle":2' in body
-    assert '"schema_version":1' in body
-    assert "### Review Recommendations" in body
-    assert "*Cycle: 02*" in body
-    assert "### Recommended for Acceptance" in body
-    assert "### Recommended for Opt-In" in body
-    assert (
-        "1. [F-3] [HIGH] Dead variable in _run_json — `scripts/recover_context.py:228`"
-        in body
-    )
-    assert "1. [F-7] [LOW] Stale comment reference — `src/util.py`" in body
-    assert "${" not in body
-
-
-def test_main_posts_github_recommendations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_post_review_comment()
-    acceptance = tmp_path / "acceptance-recs.md"
-    acceptance.write_text("1. [F-1] [MEDIUM] Defensive null check — `src/foo.py`\n")
-    opt_in = tmp_path / "opt-in-recs.md"
-    opt_in.write_text("None.\n")
-    monkeypatch.chdir(tmp_path)
-
-    captured: dict[str, object] = {}
-
-    def fake_github(pr_number: int, body: str, repo_dir: str = ".") -> None:
-        captured["pr_number"] = pr_number
-        captured["body"] = body
-        captured["repo_dir"] = repo_dir
-
-    monkeypatch.setattr(module, "post_comment_github", fake_github)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "55",
-            "--comment-type",
-            "recommendations",
-            "--cycle",
-            "4",
-            "--acceptance-findings-file",
-            str(acceptance),
-            "--opt-in-findings-file",
-            str(opt_in),
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert captured["pr_number"] == 55
-    body = captured["body"]
-    assert isinstance(body, str)
-    assert '"type":"recommendations"' in body
-    assert '"cycle":4' in body
-    assert "### Review Recommendations" in body
-    assert "*Cycle: 04*" in body
-    assert "### Recommended for Acceptance" in body
-    assert "### Recommended for Opt-In" in body
-    assert "Defensive null check" in body
-    assert "None." in body
-    assert "${" not in body
-
-
-def test_main_recommendations_requires_both_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_post_review_comment()
-    acceptance = tmp_path / "acceptance-recs.md"
-    acceptance.write_text("1. [F-1] [HIGH] X — `f.py`\n")
-    monkeypatch.chdir(tmp_path)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "1",
-            "--comment-type",
-            "recommendations",
-            "--cycle",
-            "1",
-            "--acceptance-findings-file",
-            str(acceptance),
-        ],
-    )
-
-    assert result.exit_code == 1
-    assert (
-        "Recommendations comments require --acceptance-findings-file"
-        " and --opt-in-findings-file"
-    ) in result.output
-
-
-def test_recommendations_template_filename_registered() -> None:
-    module = load_post_review_comment()
-    assert (
-        module.TEMPLATE_FILENAMES["recommendations"]
-        == "recommendations-comment.md.tmpl"
-    )
-    # All five existing types are still registered for backward compatibility.
-    for legacy_type in (
-        "review",
-        "fix_validation",
-        "acceptance",
-        "additional_acceptance",
-        "low_confidence_opt_in",
-    ):
-        assert legacy_type in module.TEMPLATE_FILENAMES
-
-
-def test_main_recommendations_requires_cycle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_post_review_comment()
-    acceptance = tmp_path / "acceptance-recs.md"
-    acceptance.write_text("1. [F-1] [HIGH] X — `f.py`\n")
-    opt_in = tmp_path / "opt-in-recs.md"
-    opt_in.write_text("None.\n")
-    monkeypatch.chdir(tmp_path)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        module.app,
-        [
-            "--pr-number",
-            "1",
-            "--comment-type",
-            "recommendations",
-            "--acceptance-findings-file",
-            str(acceptance),
-            "--opt-in-findings-file",
-            str(opt_in),
-            # intentionally omit --cycle
-        ],
-    )
-
-    assert result.exit_code == 1
-    assert "Recommendations comments require --cycle" in result.output
+    monkeypatch.setattr(prc, "post_comment", fake_post)
+    assert prc.main(cli_args(tmp_path)) == 1
+    assert "Failed to post comment" in capsys.readouterr().err

@@ -1,0 +1,2 @@
+- One HIGH finding: the payload builder drops a required field on the retry path.
+- One MEDIUM finding: the new helper is unannotated while mypy runs strict here.

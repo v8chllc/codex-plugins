@@ -1,0 +1,15 @@
+{
+  "files": {
+    "plugins/v8ch/skills/consensus-review/scripts/post_review_comment.py": "eac5b4f5b5c471b325b591f6163d7fbc9d840275d194574d84cb089c8e20b975",
+    "plugins/v8ch/skills/consensus-review/scripts/recover_context.py": "e6de6cad04af11226a08cc270938ea91b524b6e8320d0588fbec7483d5651cef",
+    "plugins/v8ch/skills/consensus-review/scripts/review_contract.py": "a7185dc611826767925ab3ba6f415f30de92ea9ff0fc11acf9ccfea4a7273909",
+    "plugins/v8ch/skills/consensus-review/templates/review-comment.md.tmpl": "4734cc379342e546babe8f0e6f3c3ea1b06923c4814bd87188bdf6daa1d1e0b4",
+    "tests/fixtures/consensus-review/comments-github-v2.json": "9c63f52632f303ba168e3d25c2b741a6e325b074d822e7b4e09dd0ed8f355364",
+    "tests/fixtures/consensus-review/comments-gitlab-v2.json": "5206dda201aa9018a2cb074a79c52044d303a29b2da23913fb135c256c691ef7",
+    "tests/fixtures/consensus-review/comments-legacy-v1.json": "3163a079da2c59bca6e180c2b3982f4aebc3ef16f8c477ca7dff12be547e296b",
+    "tests/fixtures/consensus-review/sample-report.md": "677411edd12653d73ec404bdfe6cce0a790beca94db8e7934435ab920b34b801",
+    "tests/fixtures/consensus-review/scoring-cases.json": "a715fd840d6fc8bdabf476cf401fb1dc9c501c3090faea6fcc36fdefaf61a1a3",
+    "tests/fixtures/consensus-review/summary.md": "05d68a3a0da400e5b29965c7b90b62aeb0d91c9167e342ca4111fac644745ddc"
+  },
+  "version": 1
+}
