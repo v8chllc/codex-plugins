@@ -65,8 +65,9 @@ Inspect and report; do not implement changes. You may read any file, run the
 repository's read-only checks and its configured lint, format, type, and test
 commands, and write scratch files outside the repository. Do not edit tracked
 files, create commits, or run any command that changes the working tree. The
-orchestrator compares the working tree before and after your pass and aborts the
-run on any difference.
+orchestrator compares the working tree around the reviewer batch and aborts the
+run on any difference, so one stray write ends the review for all three
+reviewers.
 
 Cite locations by repository-relative path of a tracked file, with line numbers.
 Never cite an absolute path, a home-directory path, or an untracked scratch file.

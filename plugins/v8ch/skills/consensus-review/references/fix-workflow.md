@@ -34,6 +34,11 @@ The fixer returns a path and one terminal word.
 
 - `QUALITY_FAILURES` — emit the `QUALITY_FAILURES` signal with the failing
   commands and commit nothing. The run ends here.
+
+  Leave the fixer's edits in the working tree. They are most of a repair, and
+  discarding them loses work with no record. Say in the final report that the
+  tree holds uncommitted changes, because the next invocation's default scope is
+  `git diff HEAD` and will review them as local work.
 - `COMPLETE` — continue.
 
 ### 3. Verify the dispositions

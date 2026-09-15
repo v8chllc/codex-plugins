@@ -1,371 +1,487 @@
-"""Tests for consensus-review PR/MR context recovery."""
-
+import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
-import recover_context as rc
 
-from tests.consensus_review_support import FIXTURES_DIR
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = REPO_ROOT / "plugins/v8ch/skills/consensus-review/scripts"
+SCRIPT_PATH = SCRIPTS_DIR / "recover_context.py"
+POST_SCRIPT_PATH = SCRIPTS_DIR / "post_review_comment.py"
+FIXTURES_DIR = REPO_ROOT / "tests/fixtures/consensus-review"
 
-GITHUB_V2 = FIXTURES_DIR / "comments-github-v2.json"
-GITLAB_V2 = FIXTURES_DIR / "comments-gitlab-v2.json"
-LEGACY_V1 = FIXTURES_DIR / "comments-legacy-v1.json"
-
-
-def load(path: Path) -> list[dict[str, Any]]:
-    return rc.load_comments_json(path)
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 
-# --- platform detection ----------------------------------------------------
+def load_module(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec: a dataclass with stringized annotations resolves
+    # them through sys.modules, which importlib.util does not populate for us.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def test_platform_override_wins(tmp_path: Path) -> None:
-    (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=github\n", encoding="utf-8")
-    assert rc.read_platform("GitLab", tmp_path) == "gitlab"
+def load_recover_context() -> ModuleType:
+    return load_module("recover_context", SCRIPT_PATH)
 
 
-def test_platform_falls_back_to_env_then_github(tmp_path: Path) -> None:
-    assert rc.read_platform(None, tmp_path) == "github"
-    (tmp_path / ".env").write_text('DEV_SEC_OPS_PLATFORM="gitlab"\n', encoding="utf-8")
-    assert rc.read_platform(None, tmp_path) == "gitlab"
+def load_post_review_comment() -> ModuleType:
+    return load_module("post_review_comment_for_recover", POST_SCRIPT_PATH)
 
 
-# --- paginated payload decoding --------------------------------------------
+def fixture_comments(name: str) -> list[dict[str, Any]]:
+    payload = json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+    comments: list[dict[str, Any]] = payload["comments"]
+    return comments
 
 
-def test_decode_json_stream_handles_concatenated_pages() -> None:
-    payload = '[{"body": "a"}]\n[{"body": "b"}]\n'
-    assert rc.flatten_comment_pages(payload) == [{"body": "a"}, {"body": "b"}]
-
-
-def test_decode_json_stream_handles_a_single_page() -> None:
-    assert rc.flatten_comment_pages('[{"body": "a"}]') == [{"body": "a"}]
-
-
-def test_flatten_skips_non_dict_entries() -> None:
-    assert rc.flatten_comment_pages('[{"body": "a"}, 3, null]') == [{"body": "a"}]
-
-
-# --- v2 metadata validation (contract C-5) ---------------------------------
-
-
-def valid_metadata(**overrides: Any) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "cycle": 1,
-        "delegation_mode": "parallel-subagents",
-        "files_touched": 2,
-        "findings_closed": 0,
-        "findings_opened": 2,
-        "plan_source": "none",
-        "reviewed_sha": "abc1234",
-        "schema_version": 2,
-        "scope_basis": "full-diff",
-        "score": 88,
-        "status": "passing",
-        "type": "review",
+def github_comment(body: str, *, created_at: str = "2026-09-10T12:00:00Z") -> dict:
+    return {
+        "id": 1,
+        "body": body,
+        "created_at": created_at,
+        "html_url": "https://github.com/v8chllc/example/pull/7#issuecomment-1",
+        "user": {"login": "review-bot"},
     }
-    payload.update(overrides)
-    return payload
 
 
-def test_valid_v2_metadata_is_accepted() -> None:
-    assert rc.validate_v2_metadata(valid_metadata()) is True
+def rendered_comment(**overrides: Any) -> str:
+    """Render a v2 comment with the sibling script, as a real thread would hold."""
+    module = load_post_review_comment()
+    kwargs: dict[str, Any] = {
+        "report_text": (FIXTURES_DIR / "review-report.md")
+        .read_text(encoding="utf-8")
+        .strip(),
+        "summary_text": (FIXTURES_DIR / "review-summary.md").read_text(
+            encoding="utf-8"
+        ),
+        "cycle": 1,
+        "status": "passing",
+        "score": 91,
+        "delegation_mode": "parallel-subagents",
+        "plan_source": "none",
+        "reviewed_sha": "1a2b3c4",
+        "scope_basis": "full-diff",
+        "files_touched": 3,
+        "findings_opened": 2,
+        "findings_closed": 1,
+    }
+    kwargs.update(overrides)
+    return str(module.build_comment_body(**kwargs))
 
 
-@pytest.mark.parametrize(
-    "override",
-    [
-        {"cycle": 0},
-        {"cycle": "1"},
-        {"score": 0},
-        {"score": 101},
-        {"status": "unknown"},
-        {"delegation_mode": "solo"},
-        {"plan_source": ""},
-        {"reviewed_sha": "ABC1234"},
-        {"scope_basis": "delta"},
-        {"files_touched": -1},
-        {"findings_opened": -1},
-        {"findings_closed": -1},
-        {"type": "acceptance"},
-    ],
-)
-def test_invalid_v2_metadata_is_rejected(override: dict[str, Any]) -> None:
-    assert rc.validate_v2_metadata(valid_metadata(**override)) is False
-
-
-def test_v2_metadata_rejects_an_extra_or_missing_key() -> None:
-    extra = valid_metadata()
-    extra["unexpected"] = 1
-    assert rc.validate_v2_metadata(extra) is False
-    missing = valid_metadata()
-    del missing["scope_basis"]
-    assert rc.validate_v2_metadata(missing) is False
-
-
-def test_a_comment_failing_validation_is_ignored() -> None:
-    comments = rc.parse_audit_comments(load(LEGACY_V1))
-    assert all(comment.schema_version == 1 for comment in comments)
-    assert not any(comment.is_v2_review for comment in comments)
-
-
-def test_v1_non_review_types_are_ignored() -> None:
-    comments = rc.parse_audit_comments(load(LEGACY_V1))
-    assert [comment.comment_type for comment in comments] == ["review"]
-
-
-def test_a_comment_without_metadata_is_ignored() -> None:
-    comments = rc.parse_audit_comments(load(GITHUB_V2))
-    assert len(comments) == 2
-    assert all(comment.is_v2_review for comment in comments)
-
-
-# --- cycle and scope resolution --------------------------------------------
-
-
-def test_next_cycle_follows_the_highest_prior_cycle() -> None:
-    assert rc.next_cycle(rc.parse_audit_comments(load(GITHUB_V2))) == 3
-    assert rc.next_cycle(rc.parse_audit_comments(load(LEGACY_V1))) == 2
-    assert rc.next_cycle([]) == 1
-
-
-def test_scope_basis_is_full_diff_without_a_prior_review() -> None:
-    basis, reason = rc.resolve_scope_basis([], ancestor_check=False)
-    assert basis == "full-diff"
-    assert "no prior consensus-review comment" in reason
-
-
-def test_scope_basis_is_full_diff_after_a_legacy_review() -> None:
-    comments = rc.parse_audit_comments(load(LEGACY_V1))
-    basis, reason = rc.resolve_scope_basis(comments, ancestor_check=False)
-    assert basis == "full-diff"
-    assert "schema_version 1 legacy history" in reason
-
-
-def test_scope_basis_narrows_to_the_latest_v2_sha() -> None:
-    comments = rc.parse_audit_comments(load(GITHUB_V2))
-    basis, reason = rc.resolve_scope_basis(comments, ancestor_check=False)
-    assert basis == "delta-since:def5678"
-    assert "cycle 02" in reason
-
-
-def test_scope_basis_falls_back_when_the_sha_is_not_an_ancestor(
-    tmp_path: Path,
+def stub_ancestry(
+    module: ModuleType, monkeypatch: pytest.MonkeyPatch, result: bool | None
 ) -> None:
-    comments = rc.parse_audit_comments(load(GITHUB_V2))
-    basis, reason = rc.resolve_scope_basis(comments, repo_dir=tmp_path)
-    assert basis == "full-diff"
-    assert "not an ancestor of HEAD" in reason
-
-
-def test_ancestor_check_reads_real_git_history(tmp_path: Path) -> None:
-    def git(*args: str) -> None:
-        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
-
-    git("init", "-q")
-    git("config", "user.email", "test@example.com")
-    git("config", "user.name", "Test")
-    (tmp_path / "file.txt").write_text("one\n", encoding="utf-8")
-    git("add", ".")
-    git("commit", "-qm", "first")
-    first = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    (tmp_path / "file.txt").write_text("two\n", encoding="utf-8")
-    git("commit", "-qam", "second")
-
-    assert rc.is_ancestor(first[:7], tmp_path) is True
-    assert rc.is_ancestor("0" * 40, tmp_path) is False
-
-
-def test_latest_v2_review_picks_the_highest_cycle() -> None:
-    comments = rc.parse_audit_comments(load(GITHUB_V2))
-    latest = rc.latest_v2_review(comments)
-    assert latest is not None
-    assert latest.cycle == 2
-    assert latest.metadata["reviewed_sha"] == "def5678"
-
-
-# --- output ----------------------------------------------------------------
-
-
-def build_output(path: Path, platform: str = "github") -> str:
-    comments = rc.parse_audit_comments(load(path))
-    basis, reason = rc.resolve_scope_basis(comments, ancestor_check=False)
-    return rc.build_context_output(
-        number=9,
-        platform=platform,
-        audit_comments=comments,
-        scope_basis=basis,
-        scope_reason=reason,
+    monkeypatch.setattr(
+        module, "sha_is_ancestor", lambda sha, head, repo_dir=".": result
     )
 
 
-def test_output_header_carries_the_recovery_facts() -> None:
-    output = build_output(GITHUB_V2)
-    assert output.startswith("# RECOVERED_CONTEXT")
-    assert "**Platform:** github" in output
-    assert "**PR:** 9" in output
-    assert "**Next cycle:** 03" in output
-    assert "**Score source:** raw review score" in output
-    assert "**Scope basis:** delta-since:def5678" in output
-    assert "**Scope basis reason:** cycle 02 reviewed def5678" in output
+def test_read_platform_defaults_to_github_without_an_env_file(tmp_path: Path) -> None:
+    module = load_recover_context()
+    assert module.read_platform_from_env(tmp_path) == "github"
 
 
-def test_output_uses_the_mr_label_for_gitlab() -> None:
-    assert "**MR:** 9" in build_output(GITLAB_V2, platform="gitlab")
+def test_platform_override_beats_the_env_file(tmp_path: Path) -> None:
+    module = load_recover_context()
+    (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=gitlab\n", encoding="utf-8")
+    assert module.resolve_platform(None, tmp_path) == "gitlab"
+    assert module.resolve_platform("github", tmp_path) == "github"
 
 
-def test_output_lists_prior_reviews_with_provenance() -> None:
-    output = build_output(GITHUB_V2)
-    assert "## Prior Reviews" in output
-    assert "| Cycle | Score | Status | Delegation | Plan | Scope |" in output
-    assert "| 01 | 88 | passing | parallel-subagents | none | full-diff |" in output
-
-
-def test_output_includes_the_full_surviving_body() -> None:
-    output = build_output(GITHUB_V2)
-    assert "**Full report:**" in output
-    assert "#### [F-1] [HIGH] Retry path drops the correlation id" in output
-    assert "### Score Breakdown" in output
-
-
-def test_output_extracts_the_summary_section() -> None:
-    output = build_output(GITHUB_V2)
-    assert "- One HIGH finding: the payload builder drops a required field" in output
-
-
-def test_output_reports_no_prior_comments() -> None:
-    output = rc.build_context_output(
-        number=9,
-        platform="github",
-        audit_comments=[],
-        scope_basis="full-diff",
-        scope_reason="no prior consensus-review comment exists",
+def test_normalize_handles_both_platform_shapes() -> None:
+    module = load_recover_context()
+    github = module.normalize_comment(
+        {
+            "body": "b",
+            "created_at": "2026-09-10T12:00:00Z",
+            "html_url": "https://example/1",
+            "user": {"login": "octocat"},
+        }
     )
-    assert "This is the first cycle." in output
-    assert "## Prior Reviews" not in output
+    assert github == {
+        "body": "b",
+        "created_at": "2026-09-10T12:00:00Z",
+        "url": "https://example/1",
+        "author": "octocat",
+    }
+    gitlab = module.normalize_comment(
+        {
+            "note": "n",
+            "created_at": "2026-09-11T09:00:00Z",
+            "web_url": "https://example/2",
+            "author": {"username": "maintainer"},
+        }
+    )
+    assert gitlab["body"] == "n"
+    assert gitlab["url"] == "https://example/2"
+    assert gitlab["author"] == "maintainer"
 
 
-def test_output_separates_legacy_history() -> None:
-    output = build_output(LEGACY_V1)
-    assert "## Legacy History (schema_version 1)" in output
-    assert "never supplies a narrowing" in output
-    assert "## Prior Reviews" not in output
+def test_a_v2_comment_rendered_by_the_poster_is_recovered_intact() -> None:
+    module = load_recover_context()
+    reviews = module.parse_review_comments([github_comment(rendered_comment())])
+
+    assert len(reviews) == 1
+    review = reviews[0]
+    assert review.legacy is False
+    assert review.cycle == 1
+    assert review.score == "91/100"
+    assert review.status == "passing"
+    assert review.metadata["reviewed_sha"] == "1a2b3c4"
+    recovered = module.extract_surviving_body(review.body)
+    expected = (FIXTURES_DIR / "review-report.md").read_text(encoding="utf-8").strip()
+    assert recovered == expected
 
 
-# --- fetching --------------------------------------------------------------
+def test_exact_v2_key_set_is_required() -> None:
+    module = load_recover_context()
+    valid = json.loads(
+        (FIXTURES_DIR / "metadata-cases.json").read_text(encoding="utf-8")
+    )["valid"]
+
+    extra = dict(valid, adjusted_score=92)
+    missing = {key: value for key, value in valid.items() if key != "findings_closed"}
+    bodies = [
+        github_comment(f"<!-- consensus-review\n{json.dumps(payload)}\n-->\n\nbody")
+        for payload in (extra, missing)
+    ]
+
+    assert module.parse_review_comments(bodies) == []
 
 
-def test_github_fetch_uses_the_issue_comments_api(
+def test_a_malformed_v2_comment_is_ignored_entirely() -> None:
+    module = load_recover_context()
+    reviews = module.parse_review_comments(fixture_comments("comments-github.json"))
+
+    cycles = [(review.cycle, review.legacy) for review in reviews]
+    assert cycles == [(1, True), (2, False)]
+    assert module.next_cycle(reviews) == 3
+
+
+def test_a_legacy_v1_review_is_history_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen: list[list[str]] = []
+    module = load_recover_context()
+    legacy = {
+        "schema_version": 1,
+        "type": "review",
+        "cycle": 4,
+        "status": "failing",
+        "score": 64,
+    }
+    comment = github_comment(
+        f"<!-- consensus-review\n{json.dumps(legacy)}\n-->\n\nLegacy body"
+    )
+    reviews = module.parse_review_comments([comment])
 
-    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        seen.append(command)
-        return subprocess.CompletedProcess(command, 0, '[{"body": "x"}]', "")
+    assert [review.legacy for review in reviews] == [True]
+    assert module.next_cycle(reviews) == 5
 
-    monkeypatch.setattr(rc, "GH", "/usr/bin/gh")
-    monkeypatch.setattr(rc.subprocess, "run", fake_run)
-    assert rc.fetch_github_comments(9, "/repo") == [{"body": "x"}]
-    assert seen[0] == [
+    stub_ancestry(module, monkeypatch, True)
+    basis, reason = module.resolve_scope_basis(reviews)
+    assert basis == "full-diff"
+    assert "no prior schema-v2 review" in reason
+
+
+def test_a_v1_comment_of_another_type_is_ignored() -> None:
+    module = load_recover_context()
+    payload = {"schema_version": 1, "type": "recommendations", "cycle": 2}
+    comment = github_comment(
+        f"<!-- consensus-review\n{json.dumps(payload)}\n-->\n\nRecommendations"
+    )
+    assert module.parse_review_comments([comment]) == []
+
+
+def test_a_non_consensus_comment_is_ignored() -> None:
+    module = load_recover_context()
+    assert module.parse_review_comments([github_comment("Looks good to me.")]) == []
+
+
+def test_scope_narrows_when_the_reviewed_sha_is_still_an_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_recover_context()
+    reviews = module.parse_review_comments([github_comment(rendered_comment())])
+    stub_ancestry(module, monkeypatch, True)
+
+    basis, reason = module.resolve_scope_basis(reviews)
+    assert basis == "delta-since:1a2b3c4"
+    assert "cycle 01" in reason
+
+
+def test_scope_falls_back_when_the_reviewed_sha_is_no_longer_an_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_recover_context()
+    reviews = module.parse_review_comments([github_comment(rendered_comment())])
+    stub_ancestry(module, monkeypatch, False)
+
+    basis, reason = module.resolve_scope_basis(reviews)
+    assert basis == "full-diff"
+    assert "no longer an ancestor" in reason
+
+
+def test_scope_falls_back_when_ancestry_cannot_be_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_recover_context()
+    reviews = module.parse_review_comments([github_comment(rendered_comment())])
+    stub_ancestry(module, monkeypatch, None)
+
+    basis, reason = module.resolve_scope_basis(reviews)
+    assert basis == "full-diff"
+    assert "could not verify" in reason
+
+
+def test_scope_uses_the_latest_v2_review_not_the_latest_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_recover_context()
+    comments = [
+        github_comment(
+            rendered_comment(cycle=1, reviewed_sha="aaaaaaa"),
+            created_at="2026-09-10T10:00:00Z",
+        ),
+        github_comment(
+            rendered_comment(cycle=2, reviewed_sha="bbbbbbb"),
+            created_at="2026-09-10T11:00:00Z",
+        ),
+    ]
+    reviews = module.parse_review_comments(comments)
+    stub_ancestry(module, monkeypatch, True)
+
+    assert module.resolve_scope_basis(reviews)[0] == "delta-since:bbbbbbb"
+
+
+def test_no_prior_review_reviews_the_full_diff() -> None:
+    module = load_recover_context()
+    basis, reason = module.resolve_scope_basis([])
+    assert basis == "full-diff"
+    assert "no prior schema-v2 review" in reason
+
+
+def test_sha_is_ancestor_maps_git_exit_codes(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_recover_context()
+    monkeypatch.setattr(module, "GIT", "/usr/bin/git")
+
+    def with_code(code: int):
+        def fake(command: list[str], **kwargs: Any) -> Any:
+            return subprocess.CompletedProcess(command, code, "", "")
+
+        return fake
+
+    monkeypatch.setattr(module.subprocess, "run", with_code(0))
+    assert module.sha_is_ancestor("abc1234", "HEAD") is True
+    monkeypatch.setattr(module.subprocess, "run", with_code(1))
+    assert module.sha_is_ancestor("abc1234", "HEAD") is False
+    monkeypatch.setattr(module.subprocess, "run", with_code(128))
+    assert module.sha_is_ancestor("abc1234", "HEAD") is None
+
+    monkeypatch.setattr(module, "GIT", None)
+    assert module.sha_is_ancestor("abc1234", "HEAD") is None
+
+
+def test_github_fetch_uses_the_paginated_issue_comments_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_recover_context()
+    monkeypatch.setattr(module, "GH", "/usr/bin/gh")
+    captured: dict[str, Any] = {}
+
+    def fake_run(command: list[str], repo_dir: Any) -> str:
+        captured["command"] = command
+        captured["repo_dir"] = repo_dir
+        return '[{"body": "x"}]'
+
+    monkeypatch.setattr(module, "run_command", fake_run)
+    assert module.fetch_github_comments(7, "/repo") == [{"body": "x"}]
+    assert captured["command"] == [
         "/usr/bin/gh",
         "api",
-        "repos/{owner}/{repo}/issues/9/comments",
+        "repos/{owner}/{repo}/issues/7/comments",
         "--paginate",
     ]
+    assert captured["repo_dir"] == "/repo"
 
 
-def test_gitlab_fetch_uses_the_notes_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[list[str]] = []
+def test_gitlab_fetch_uses_the_paginated_notes_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_recover_context()
+    monkeypatch.setattr(module, "GLAB", "/usr/bin/glab")
+    captured: dict[str, Any] = {}
 
-    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        seen.append(command)
-        return subprocess.CompletedProcess(command, 0, '[{"note": "x"}]', "")
+    def fake_run(command: list[str], repo_dir: Any) -> str:
+        captured["command"] = command
+        return '[{"note": "x"}]'
 
-    monkeypatch.setattr(rc, "GLAB", "/usr/bin/glab")
-    monkeypatch.setattr(rc.subprocess, "run", fake_run)
-    assert rc.fetch_gitlab_comments(9, "/repo") == [{"note": "x"}]
-    assert seen[0] == [
+    monkeypatch.setattr(module, "run_command", fake_run)
+    assert module.fetch_gitlab_comments(4, ".") == [{"note": "x"}]
+    assert captured["command"] == [
         "/usr/bin/glab",
         "api",
-        "projects/:id/merge_requests/9/notes",
+        "projects/:id/merge_requests/4/notes",
         "--paginate",
     ]
 
 
-def test_fetch_requires_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rc, "GH", None)
-    with pytest.raises(FileNotFoundError, match="gh executable"):
-        rc.fetch_github_comments(9)
-    monkeypatch.setattr(rc, "GLAB", None)
-    with pytest.raises(FileNotFoundError, match="glab executable"):
-        rc.fetch_gitlab_comments(9)
+def test_fetch_requires_the_platform_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_recover_context()
+    monkeypatch.setattr(module, "GH", None)
+    monkeypatch.setattr(module, "GLAB", None)
+    with pytest.raises(FileNotFoundError, match="gh"):
+        module.fetch_platform_comments(7, platform="github")
+    with pytest.raises(FileNotFoundError, match="glab"):
+        module.fetch_platform_comments(7, platform="gitlab")
 
 
-def test_fetch_raises_on_a_client_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(command, 1, "", "not authenticated")
+def test_run_command_raises_on_a_failed_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_recover_context()
 
-    monkeypatch.setattr(rc, "GH", "/usr/bin/gh")
-    monkeypatch.setattr(rc.subprocess, "run", fake_run)
+    def fake(command: list[str], **kwargs: Any) -> Any:
+        return subprocess.CompletedProcess(command, 1, "", "unauthorized")
+
+    monkeypatch.setattr(module.subprocess, "run", fake)
     with pytest.raises(subprocess.CalledProcessError):
-        rc.fetch_github_comments(9)
+        module.run_command(["gh"], ".")
 
 
-def test_gitlab_notes_are_normalized_like_github_comments() -> None:
-    comments = rc.parse_audit_comments(load(GITLAB_V2))
-    assert len(comments) == 1
-    assert comments[0].author == "reviewer"
-    assert comments[0].url.endswith("#note_1")
+def test_paginated_pages_decode_into_one_comment_list() -> None:
+    """``gh``/``glab`` --paginate emit one JSON array per page, concatenated."""
+    module = load_recover_context()
+    two_pages = '[{"body": "a"}]\n[{"body": "b"}]'
+    assert module.flatten_comment_pages(two_pages) == [{"body": "a"}, {"body": "b"}]
+    assert module.flatten_comment_pages('[{"body": "a"}]') == [{"body": "a"}]
+    assert module.flatten_comment_pages('[{"body": "a"}, 3, null]') == [{"body": "a"}]
+    assert module.flatten_comment_pages("") == []
 
 
 def test_load_comments_json_accepts_both_shapes(tmp_path: Path) -> None:
+    module = load_recover_context()
     listed = tmp_path / "list.json"
-    listed.write_text(json.dumps([{"body": "a"}]), encoding="utf-8")
+    listed.write_text(json.dumps([{"body": "a"}, "skip me"]), encoding="utf-8")
+    assert module.load_comments_json(listed) == [{"body": "a"}]
+
     wrapped = tmp_path / "wrapped.json"
-    wrapped.write_text(json.dumps({"comments": [{"body": "a"}]}), encoding="utf-8")
-    assert rc.load_comments_json(listed) == rc.load_comments_json(wrapped)
+    wrapped.write_text(json.dumps({"comments": [{"body": "b"}]}), encoding="utf-8")
+    assert module.load_comments_json(wrapped) == [{"body": "b"}]
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text(json.dumps({"comments": 5}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        module.load_comments_json(invalid)
 
 
-def test_load_comments_json_rejects_another_shape(tmp_path: Path) -> None:
-    path = tmp_path / "bad.json"
-    path.write_text(json.dumps({"comments": 3}), encoding="utf-8")
-    with pytest.raises(ValueError, match="must be a list"):
-        rc.load_comments_json(path)
-
-
-# --- CLI -------------------------------------------------------------------
-
-
-def test_cli_prints_the_recovered_context(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    exit_code = rc.main(
-        ["9", "--repo-dir", str(tmp_path), "--comments-json", str(GITHUB_V2)]
-    )
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    assert output.startswith("# RECOVERED_CONTEXT")
-    assert "**Next cycle:** 03" in output
-    # tmp_path is not a git repo, so the recorded SHA cannot be an ancestor.
-    assert "**Scope basis:** full-diff" in output
-
-
-def test_cli_reports_a_fetch_failure(
+def test_main_reports_the_github_thread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fake_fetch(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        raise subprocess.CalledProcessError(1, ["gh"], "", "not authenticated")
+    module = load_recover_context()
+    stub_ancestry(module, monkeypatch, True)
 
-    monkeypatch.setattr(rc, "fetch_platform_comments", fake_fetch)
-    assert rc.main(["9", "--repo-dir", str(tmp_path)]) == 1
+    exit_code = module.main(
+        [
+            "7",
+            "--platform",
+            "github",
+            "--repo-dir",
+            str(tmp_path),
+            "--comments-json",
+            str(FIXTURES_DIR / "comments-github.json"),
+        ]
+    )
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# RECOVERED_CONTEXT")
+    assert "**Platform:** github" in out
+    assert "**PR number:** 7" in out
+    assert "**Next cycle:** 03" in out
+    assert "**Score source:** raw review score" in out
+    assert "**Scope basis:** delta-since:1a2b3c4" in out
+    assert "### Cycle 02" in out
+    assert "Delegation: parallel-subagents. Plan: none." in out
+    assert "Blast radius: 3 files, 2 opened, 1 closed." in out
+    assert "## Legacy Reviews" in out
+    assert "Cycle 01 — 64/100" in out
+    assert "[F-1] [HIGH]" in out
+    assert "Missing findings_closed" not in out
+
+
+def test_main_reports_the_gitlab_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = load_recover_context()
+    stub_ancestry(module, monkeypatch, True)
+
+    exit_code = module.main(
+        [
+            "4",
+            "--platform",
+            "gitlab",
+            "--repo-dir",
+            str(tmp_path),
+            "--comments-json",
+            str(FIXTURES_DIR / "comments-gitlab.json"),
+        ]
+    )
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "**Platform:** gitlab" in out
+    assert "**MR number:** 4" in out
+    assert "**Next cycle:** 03" in out
+    assert "### Cycle 02" in out
+    assert "Pipeline is green" not in out
+
+
+def test_main_reports_an_empty_thread_as_the_first_cycle(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = load_recover_context()
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps({"comments": []}), encoding="utf-8")
+
+    exit_code = module.main(
+        ["7", "--repo-dir", str(tmp_path), "--comments-json", str(empty)]
+    )
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "**Next cycle:** 01" in out
+    assert "**Scope basis:** full-diff" in out
+    assert "None. This is the first cycle." in out
+
+
+def test_main_reports_a_fetch_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = load_recover_context()
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise subprocess.CalledProcessError(1, ["gh"], "", "unauthorized")
+
+    monkeypatch.setattr(module, "fetch_platform_comments", fail)
+
+    exit_code = module.main(["7", "--repo-dir", str(tmp_path)])
+
+    assert exit_code == 1
     assert "failed to recover PR/MR comments" in capsys.readouterr().err
+
+
+def test_extract_surviving_body_falls_back_without_a_details_block() -> None:
+    module = load_recover_context()
+    body = "<!-- consensus-review\n{}\n-->\n\nPlain body"
+    assert module.extract_surviving_body(body) == "Plain body"

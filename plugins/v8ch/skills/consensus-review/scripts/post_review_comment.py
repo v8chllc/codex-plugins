@@ -4,20 +4,21 @@
 # dependencies = []
 # ///
 
-"""
-Render and post the consensus-review PR/MR comment.
+"""Render and post the consensus-review comment for the Codex CLI plugin.
 
-One comment type exists: ``review``. The script validates the audit metadata
-(schema_version 2, contract C-5), renders the comment from a template, and posts
-it with ``gh`` or ``glab``. Status and score are decided by the synthesizer; this
-script only refuses to publish a report that fails the contract.
+Reads the platform from ``DEV_SEC_OPS_PLATFORM`` or ``--platform``, validates
+every schema-v2 field against ``review_contract``, renders
+``templates/review-comment.md.tmpl``, and posts the result with ``gh`` or
+``glab``. Status and summary authorship stay with the calling role; this script
+owns validation, deterministic rendering, and transport.
+
+Byte-identical to the Claude copy in ``v8chllc/claude-plugins`` apart from this
+docstring.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import re
 import shutil
 import subprocess
 import sys
@@ -25,41 +26,27 @@ from pathlib import Path
 from string import Template
 
 from review_contract import (
-    DELEGATION_MODES,
-    METADATA_KEYS,
-    SCHEMA_VERSION,
-    STATUS_LABELS,
-    STATUSES,
+    ContractError,
+    build_metadata,
     extract_quality_score,
-    is_non_negative_int,
-    is_valid_scope_basis,
-    is_valid_score,
-    is_valid_sha,
+    render_metadata_block,
+    status_label,
 )
 
 # Resolve absolute paths for external tools at module load (prevents PATH hijacking)
 GH = shutil.which("gh")
 GLAB = shutil.which("glab")
 
-STATUS_EMOJI: dict[str, str] = {
+STATUS_EMOJI = {
     "clean": "✅",
     "passing": "🟡",
     "failing": "❌",
 }
 
-TEMPLATE_FILENAME = "review-comment.md.tmpl"
-
-_EVIDENCE_RE = re.compile(
-    r"^###\s+Evidence\s*$\n(?P<body>.*?)(?=^###\s|\Z)",
-    re.MULTILINE | re.DOTALL,
-)
-_NESTED_DETAILS_RE = re.compile(r"<details\b", re.IGNORECASE)
-
+TEMPLATE_NAME = "review-comment.md.tmpl"
+EVIDENCE_HEADING = "### Evidence"
+MIN_SUMMARY_BULLETS = 1
 MAX_SUMMARY_BULLETS = 3
-
-
-class ContractError(ValueError):
-    """Raised when an input violates the consensus-review publishing contract."""
 
 
 def read_platform_from_env(repo_dir: str | Path = ".") -> str:
@@ -78,6 +65,13 @@ def read_platform_from_env(repo_dir: str | Path = ".") -> str:
     return "github"
 
 
+def resolve_platform(override: str | None, repo_dir: str | Path = ".") -> str:
+    """Return the platform from the explicit override or the repo-local .env."""
+    if override:
+        return override.strip().lower()
+    return read_platform_from_env(repo_dir)
+
+
 def read_required_text(path: str | Path, *, label: str) -> str:
     """Read a required text file and fail if it is missing or empty."""
     try:
@@ -85,48 +79,80 @@ def read_required_text(path: str | Path, *, label: str) -> str:
     except OSError as error:
         raise ContractError(f"Failed to read {label} '{path}': {error}") from error
     if not content:
-        raise ContractError(f"{label.capitalize()} file is empty.")
+        raise ContractError(f"The {label} file '{path}' is empty.")
     return content
 
 
-def build_summary_lines(summary_file: str | Path) -> list[str]:
-    """Read the 1-3 bullet summary and reject any other shape."""
-    content = read_required_text(summary_file, label="summary")
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-    if not 1 <= len(lines) <= MAX_SUMMARY_BULLETS:
+def validate_summary(summary_text: str) -> str:
+    """Validate the one-to-three bullet summary authored by the poster role."""
+    lines = [line.strip() for line in summary_text.splitlines() if line.strip()]
+    if not all(line.startswith("- ") for line in lines):
+        raise ContractError("Every summary line must be a markdown bullet ('- ').")
+    if not MIN_SUMMARY_BULLETS <= len(lines) <= MAX_SUMMARY_BULLETS:
         raise ContractError(
-            f"Summary must hold 1-{MAX_SUMMARY_BULLETS} bullets, got {len(lines)}."
+            f"The summary must hold {MIN_SUMMARY_BULLETS} to {MAX_SUMMARY_BULLETS} "
+            f"bullets, got {len(lines)}."
         )
-    return lines
+    return "\n".join(lines)
 
 
-def template_dir() -> Path:
-    """Return the template directory located beside the skill scripts."""
-    return Path(__file__).resolve().parent.parent / "templates"
+def validate_report(report_text: str) -> None:
+    """Reject a report that cannot be posted or recovered intact."""
+    if EVIDENCE_HEADING not in report_text:
+        raise ContractError(
+            "The report is missing its merged '### Evidence' section; the "
+            "synthesizer did not complete."
+        )
+    if "<details>" in report_text.lower():
+        raise ContractError(
+            "The report contains a <details> block. The comment wraps the report "
+            "in one <details> element, and a nested block truncates recovery."
+        )
+
+
+def resolve_score(report_text: str) -> int:
+    """Return the raw score from the report's Quality Score heading.
+
+    The heading is the only source. An override flag would let a caller publish
+    metadata that contradicts the visible report, and the synthesizer alone
+    decides the score.
+    """
+    extracted = extract_quality_score(report_text)
+    if extracted is None:
+        raise ContractError(
+            "No raw score found. The report needs a '### Quality Score: N/100' heading."
+        )
+    return extracted
+
+
+def template_path() -> Path:
+    """Return the review template shipped beside the skill scripts."""
+    return Path(__file__).resolve().parent.parent / "templates" / TEMPLATE_NAME
 
 
 def load_template() -> Template:
     """Load the review comment template."""
-    template_path = template_dir() / TEMPLATE_FILENAME
+    path = template_path()
     try:
-        content = template_path.read_text(encoding="utf-8")
+        return Template(path.read_text(encoding="utf-8"))
     except OSError as error:
-        raise ContractError(
-            f"Failed to read template '{template_path}': {error}"
-        ) from error
-    return Template(content)
+        raise ContractError(f"Failed to read template '{path}': {error}") from error
 
 
-def extract_evidence(review_text: str) -> str:
-    """Return the merged Evidence section body from a synthesized report."""
-    match = _EVIDENCE_RE.search(review_text)
-    if not match:
-        return ""
-    return match.group("body").strip()
+def build_provenance_line(
+    *, delegation_mode: str, plan_source: str, scope_basis: str, reviewed_sha: str
+) -> str:
+    """Render the single provenance line shown above the summary."""
+    return (
+        f"Delegation: {delegation_mode}. Plan: {plan_source}. "
+        f"Scope: {scope_basis}. Reviewed: {reviewed_sha}."
+    )
 
 
-def build_metadata(
+def build_comment_body(
     *,
+    report_text: str,
+    summary_text: str,
     cycle: int,
     status: str,
     score: int,
@@ -137,125 +163,38 @@ def build_metadata(
     files_touched: int,
     findings_opened: int,
     findings_closed: int,
-) -> dict[str, object]:
-    """Build and validate the schema_version 2 audit metadata (contract C-5)."""
-    metadata: dict[str, object] = {
-        "cycle": cycle,
-        "delegation_mode": delegation_mode,
-        "files_touched": files_touched,
-        "findings_closed": findings_closed,
-        "findings_opened": findings_opened,
-        "plan_source": plan_source,
-        "reviewed_sha": reviewed_sha,
-        "schema_version": SCHEMA_VERSION,
-        "scope_basis": scope_basis,
-        "score": score,
-        "status": status,
-        "type": "review",
-    }
-    validate_metadata(metadata)
-    return metadata
-
-
-def validate_metadata(metadata: dict[str, object]) -> None:
-    """Raise ContractError unless every C-5 key and value type is satisfied."""
-    if set(metadata) != METADATA_KEYS:
-        missing = sorted(METADATA_KEYS - set(metadata))
-        extra = sorted(set(metadata) - METADATA_KEYS)
-        raise ContractError(
-            f"Metadata key set mismatch (missing={missing}, unexpected={extra})."
-        )
-    if metadata["schema_version"] != SCHEMA_VERSION:
-        raise ContractError(f"schema_version must be {SCHEMA_VERSION}.")
-    if metadata["type"] != "review":
-        raise ContractError("type must be 'review'.")
-    cycle = metadata["cycle"]
-    if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
-        raise ContractError("cycle must be an integer >= 1.")
-    if not is_valid_score(metadata["score"]):
-        raise ContractError("score must be an integer between 1 and 100.")
-    if metadata["status"] not in STATUSES:
-        raise ContractError(f"status must be one of {', '.join(STATUSES)}.")
-    if metadata["delegation_mode"] not in DELEGATION_MODES:
-        raise ContractError(
-            f"delegation_mode must be one of {', '.join(DELEGATION_MODES)}."
-        )
-    plan_source = metadata["plan_source"]
-    if not isinstance(plan_source, str) or not plan_source.strip():
-        raise ContractError("plan_source must be a non-empty string.")
-    if not is_valid_sha(metadata["reviewed_sha"]):
-        raise ContractError("reviewed_sha must be 7-40 lowercase hex characters.")
-    if not is_valid_scope_basis(metadata["scope_basis"]):
-        raise ContractError("scope_basis must be 'full-diff' or 'delta-since:<sha>'.")
-    for key in ("files_touched", "findings_opened", "findings_closed"):
-        if not is_non_negative_int(metadata[key]):
-            raise ContractError(f"{key} must be a non-negative integer.")
-
-
-def build_metadata_block(metadata: dict[str, object]) -> str:
-    """Render the hidden metadata block used for PR/MR audit recovery."""
-    encoded = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
-    return f"<!-- consensus-review\n{encoded}\n-->"
-
-
-def build_provenance_line(
-    *,
-    delegation_mode: str,
-    plan_source: str,
-    scope_basis: str,
-    reviewed_sha: str,
 ) -> str:
-    """Render the single provenance line shown above the summary."""
-    return (
-        f"Delegation: {delegation_mode}. Plan: {plan_source}. "
-        f"Scope: {scope_basis}. Reviewed: {reviewed_sha}."
+    """Build the full review comment, metadata block first."""
+    validate_report(report_text)
+    metadata = build_metadata(
+        cycle=cycle,
+        status=status,
+        score=score,
+        delegation_mode=delegation_mode,
+        plan_source=plan_source,
+        reviewed_sha=reviewed_sha,
+        scope_basis=scope_basis,
+        files_touched=files_touched,
+        findings_opened=findings_opened,
+        findings_closed=findings_closed,
     )
-
-
-def build_review_comment_body(
-    review_text: str,
-    *,
-    summary_lines: list[str],
-    metadata: dict[str, object],
-) -> str:
-    """Render the full review comment, metadata block first."""
-    validate_metadata(metadata)
-
-    status = str(metadata["status"])
-    score = int(str(metadata["score"]))
-    cycle = int(str(metadata["cycle"]))
-
-    if extract_quality_score(review_text) is None:
-        raise ContractError(
-            "Review report is missing a '### Quality Score: N/100' heading."
-        )
-    if not extract_evidence(review_text):
-        raise ContractError(
-            "Review report is missing a non-empty '### Evidence' section."
-        )
-
-    # recover_context.py reads the first <details> block as the full report, so a
-    # nested block inside the report body would truncate recovery.
-    if _NESTED_DETAILS_RE.search(review_text):
-        raise ContractError("Review report must not contain a nested <details> block.")
-
     body = load_template().substitute(
         {
             "icon": STATUS_EMOJI[status],
             "cycle_suffix": f"{cycle:02d}",
             "score": str(score),
-            "status_label": STATUS_LABELS[status],
+            "status_label": status_label(status),
             "provenance_line": build_provenance_line(
-                delegation_mode=str(metadata["delegation_mode"]),
-                plan_source=str(metadata["plan_source"]),
-                scope_basis=str(metadata["scope_basis"]),
-                reviewed_sha=str(metadata["reviewed_sha"]),
+                delegation_mode=delegation_mode,
+                plan_source=plan_source,
+                scope_basis=scope_basis,
+                reviewed_sha=reviewed_sha,
             ),
-            "summary_text": "\n".join(summary_lines),
-            "details_text": review_text,
+            "summary_text": validate_summary(summary_text),
+            "details_text": report_text,
         }
     )
-    return f"{build_metadata_block(metadata)}\n\n{body}"
+    return f"{render_metadata_block(metadata)}\n\n{body}"
 
 
 def post_comment_github(pr_number: int, body: str, repo_dir: str | Path = ".") -> None:
@@ -299,6 +238,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--pr-number", type=int, required=True, help="PR/MR number to comment on"
     )
     parser.add_argument(
+        "--comment-type",
+        choices=["review"],
+        default="review",
+        help="Comment type; the review comment is the only type v2 posts",
+    )
+    parser.add_argument(
         "--review-file",
         required=True,
         help="Path to the synthesized review report",
@@ -311,17 +256,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--repo-dir",
         default=".",
-        help="Git repository directory where gh/glab commands run (default: .)",
+        help="Git repository directory where gh/glab commands run",
     )
-    parser.add_argument("--cycle", type=int, required=True, help="Review cycle number")
     parser.add_argument(
-        "--status", required=True, choices=list(STATUSES), help="Review status"
+        "--platform",
+        choices=["github", "gitlab"],
+        default=None,
+        help="Override DEV_SEC_OPS_PLATFORM detection",
+    )
+    parser.add_argument(
+        "--cycle", type=int, required=True, help="Review cycle number (>= 1)"
+    )
+    parser.add_argument(
+        "--status",
+        choices=["clean", "passing", "failing"],
+        required=True,
+        help="Review status decided by the synthesizer",
     )
     parser.add_argument(
         "--delegation-mode",
+        choices=["parallel-subagents", "sequential-fallback"],
         required=True,
-        choices=list(DELEGATION_MODES),
-        help="How the reviewer roles were run",
+        help="How the three reviewers ran",
     )
     parser.add_argument(
         "--plan-source",
@@ -343,43 +299,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--findings-opened", type=int, required=True, help="Findings opened this cycle"
     )
     parser.add_argument(
-        "--findings-closed", type=int, required=True, help="Findings closed this cycle"
-    )
-    parser.add_argument(
-        "--score",
+        "--findings-closed",
         type=int,
-        default=None,
-        help="Raw score; read from the review report heading when omitted",
-    )
-    parser.add_argument(
-        "--platform",
-        default=None,
-        choices=["github", "gitlab"],
-        help="Override platform detection (default: DEV_SEC_OPS_PLATFORM, else github)",
+        required=True,
+        help="Prior-cycle findings confirmed closed",
     )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Validate inputs, render the review comment, and post it."""
+    """Render and post one review comment. Returns a process exit code."""
     args = build_parser().parse_args(argv)
-
-    platform = args.platform or read_platform_from_env(args.repo_dir)
+    platform = resolve_platform(args.platform, args.repo_dir)
 
     try:
-        review_text = read_required_text(args.review_file, label="review")
-        summary_lines = build_summary_lines(args.summary_file)
-        score = args.score
-        if score is None:
-            score = extract_quality_score(review_text)
-        if score is None:
-            raise ContractError(
-                "Review comments require a Quality Score heading or --score."
-            )
-        metadata = build_metadata(
+        report_text = read_required_text(args.review_file, label="review")
+        summary_text = read_required_text(args.summary_file, label="summary")
+        body = build_comment_body(
+            report_text=report_text,
+            summary_text=summary_text,
             cycle=args.cycle,
             status=args.status,
-            score=score,
+            score=resolve_score(report_text),
             delegation_mode=args.delegation_mode,
             plan_source=args.plan_source,
             reviewed_sha=args.reviewed_sha,
@@ -387,9 +328,6 @@ def main(argv: list[str] | None = None) -> int:
             files_touched=args.files_touched,
             findings_opened=args.findings_opened,
             findings_closed=args.findings_closed,
-        )
-        body = build_review_comment_body(
-            review_text, summary_lines=summary_lines, metadata=metadata
         )
     except ContractError as error:
         print(f"Error: {error}", file=sys.stderr)
@@ -402,10 +340,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except subprocess.CalledProcessError as error:
         print(
-            f"Error: Failed to post comment (exit code {error.returncode}): {error}",
+            f"Error: failed to post comment (exit code {error.returncode}): {error}",
             file=sys.stderr,
         )
         return 1
+
+    print(
+        f"Posted cycle {args.cycle:02d} review comment to {platform} #{args.pr_number}."
+    )
     return 0
 
 
