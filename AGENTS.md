@@ -22,8 +22,11 @@ read `CODING_STANDARDS.md`.
   CLI plugin marketplace purpose.
 - Keep repo marketplace metadata in `.agents/plugins/marketplace.json`.
 - Keep each plugin manifest at `plugins/<plugin>/.codex-plugin/plugin.json`.
-- Plugin-scoped Codex agent definitions live in `plugins/<plugin>/agents/` as
-  TOML files.
+- Codex plugins cannot ship agents: the manifest parser drops an `agents` key,
+  and custom agents load only from `~/.codex/agents/` or `.codex/agents/`. A
+  plugin that needs named roles ships them as skill-bundled prompt assets under
+  `plugins/<plugin>/skills/<skill>/agents/` and passes their contents to
+  `spawn_agent`.
 - Whenever any file under `plugins/<name>/` changes, bump the version in
   `plugins/<name>/.codex-plugin/plugin.json` in the same pull request. A merged
   change with no version bump ships a version already present in installed
