@@ -128,7 +128,7 @@ Before spawning any read-only role, record:
 
 ```bash
 git rev-parse HEAD
-git status --porcelain=v1 --untracked-files=all --ignored
+git status --porcelain=v1 --untracked-files=all
 ```
 
 ### 5. Run the three reviewers
@@ -148,9 +148,11 @@ without a score.
 Take the snapshot again and compare it to step 4. On any difference, emit
 `ABORT` with `reason` `read_only_role_mutated` and post nothing.
 
-The check detects new commits and changes to tracked, untracked, and ignored
-paths inside the repository. It does not detect changes outside the repository
-or content-only edits to already-ignored files.
+The check covers new commits and changes to tracked and untracked paths inside
+the repository. It does not cover ignored paths — the reviewers run the
+repository's lint, type, and test commands, which write caches there — nor
+anything outside the repository. Those limits are why the roles are also told
+not to write, rather than relying on this check alone.
 
 ### 8. Synthesize
 
@@ -216,8 +218,8 @@ at that point is `null`; an empty list is `[]`.
 | `REVIEW_COMPLETE` | A local review returned, or a PR/MR review reached `clean` | `score`, `status`, `review_url` |
 | `NO_DIFF` | Nothing to review | `scope` |
 | `EVIDENCE_FAILED` | A reviewer failed the evidence gate twice | `failed_passes` |
-| `QUALITY_FAILURES` | Quality commands still fail after the fix pass; nothing committed | `score`, `review_url`, `failed_commands` |
-| `BLOCKERS_REMAIN` | Fixes pushed, but findings remain `partial` or `work-item-required` and the budget allows no further review | `score`, `review_url`, `commit_shas`, `work_items` |
+| `QUALITY_FAILURES` | Quality commands still fail after the fix pass; nothing is committed and the fixer's edits stay in the working tree | `score`, `review_url`, `failed_commands` |
+| `BLOCKERS_REMAIN` | Fixes pushed, but findings remain `partial` or `work-item-required` and the budget allows no further review, or the fixer returned a finding with no disposition | `score`, `review_url`, `commit_shas`, `work_items` |
 | `PUSH_COMPLETE` | Fixes committed and pushed, budget exhausted before a `clean` review | `score`, `review_url`, `commit_shas`, `work_items` |
 | `MAX_REVIEWS_REACHED` | The third review is still not `clean` | `score`, `status`, `review_url`, `work_items` |
 | `ABORT` | An unrecoverable error | `reason`, `message`, `score`, `review_url` |
