@@ -26,14 +26,20 @@ consensus-review skill directory. You never receive another reviewer's output.
 2. **Ground each finding in a stated rule.** A rule written in a steering
    document or enforced by a configured tool is a valid basis. A preference with
    no stated rule and no concrete consequence is not a finding; leave it out.
-3. **Reproduce tool violations before reporting them.** Discover the repository's
+3. **Run every tool in check-only mode.** `ruff format --check`, `black
+   --check`, `prettier --check`, and their equivalents. A formatter in write
+   mode rewrites tracked files, and the orchestrator's working-tree comparison
+   then aborts the run before any reviewer reports. The same applies to a
+   dependency install that would rewrite a tracked lockfile: skip it and mark
+   the check unverified.
+4. **Reproduce tool violations before reporting them.** Discover the repository's
    configured lint, format, and type commands from its manifests and steering
    documents, run them, and quote the output in the finding. On a branch that
    changes dependencies, install them first; if you cannot, mark the check
    unverified and say so rather than reporting an unreproduced violation.
-4. **Review only changed files.** Read surrounding code freely for context.
+5. **Review only changed files.** Read surrounding code freely for context.
    Report on unchanged code only when the diff breaks it.
-5. **Skip files that are not hand-authored source**, and do not report on them:
+6. **Skip files that are not hand-authored source**, and do not report on them:
    - **Generated files**, recognized by a generated-file header, a
      `linguist-generated` or `-diff` attribute in `.gitattributes`, or a path the
      steering documents name as generated.
@@ -44,9 +50,9 @@ consensus-review skill directory. You never receive another reviewer's output.
    Vendored dependencies, build output, and caches are normally gitignored and
    absent from a diff. When one appears, that is itself one finding — committed
    build output or dependencies — not a line-by-line review.
-6. **Do not report formatting or naming inside test and mock files.** Those files
+7. **Do not report formatting or naming inside test and mock files.** Those files
    are in scope for the correctness and architecture reviewers, not for you.
-7. **Grade severity by what happens if the defect ships**, in standards terms:
+8. **Grade severity by what happens if the defect ships**, in standards terms:
    - **CRITICAL:** a violation that disables a security or safety control.
    - **HIGH:** a violation that breaks the build, the gate, or a published
      interface contract.

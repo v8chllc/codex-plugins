@@ -175,12 +175,16 @@ failure is `ABORT` with `reason` `post_failed`.
 
 - `clean` — stop and emit `REVIEW_COMPLETE`.
 - `passing` or `failing` — run `references/fix-workflow.md`, then review again if
-  the budget allows.
+  the budget allows. That workflow returns an outcome; this skill emits the one
+  terminal signal.
 
 **Budget:** at most three reviews per invocation, whatever the PR/MR's cycle
 count or which toolchain wrote earlier cycles. Every new invocation gets a fresh
 budget. Cycle numbers accumulate with no cap. When the third review is still not
-`clean`, emit `MAX_REVIEWS_REACHED`.
+`clean`, end on the first matching signal in the fix workflow's precedence list:
+unresolved findings give `BLOCKERS_REMAIN`, a pushed third-cycle fix gives
+`PUSH_COMPLETE`, and a third review that produced no commit gives
+`MAX_REVIEWS_REACHED`. Without that order one run could end on either signal.
 
 ## Constraints and authority
 
@@ -224,7 +228,7 @@ at that point is `null`; an empty list is `[]`.
 | `MAX_REVIEWS_REACHED` | The third review is still not `clean` | `score`, `status`, `review_url`, `work_items` |
 | `ABORT` | An unrecoverable error | `reason`, `message`, `score`, `review_url` |
 
-`ABORT` `reason` is one of `head_mismatch`, `branch_mismatch`, `platform_auth`,
+`ABORT` `reason` is one of `command_failed`, `head_mismatch`, `branch_mismatch`, `platform_auth`,
 `post_failed`, `read_only_role_mutated`.
 
 **Retry limit:** a failed evidence pass is rerun once. Nothing else is retried.

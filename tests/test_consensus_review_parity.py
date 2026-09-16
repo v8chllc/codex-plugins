@@ -1,10 +1,16 @@
 """Parity and portability guards for the consensus-review skill.
 
-The scripts, templates, and fixtures are byte-identical to the Codex copy in
-``v8chllc/codex-plugins`` apart from each module's docstring, which names its
+The scripts, templates, and fixtures are byte-identical to the Claude copy in
+``v8chllc/claude-plugins`` apart from each module's docstring, which names its
 toolchain. ``parity-manifest.json`` pins a hash per file over the
 docstring-stripped content, so an edit on one side fails here until the other
 side moves with it.
+
+This file proves local consistency only: it cannot see the sibling repository.
+The cross-repository comparison — both manifests, both fixture sets, and a
+comment rendered by one toolchain and recovered by the other — lives in the
+external seam suite, `tests/test_consensus_review_seam.py` in the workspace
+repository, which loads both checkouts and belongs to neither.
 """
 
 import ast
@@ -25,8 +31,9 @@ FIXTURES_DIR = REPO_ROOT / "tests/fixtures/consensus-review"
 MANIFEST_PATH = SKILL_DIR / "parity-manifest.json"
 
 # A skill or role asset must never name the plugin's own install path: the
-# orchestrator passes ${CLAUDE_SKILL_DIR}, and the Codex copy resolves the path
-# relative to SKILL.md. A literal path breaks whenever either moves.
+# Codex performs no substitution in SKILL.md, so a path is resolved relative to
+# the directory holding SKILL.md. A literal plugin path breaks whenever the
+# plugin moves, and a ${...} placeholder would reach the model unexpanded.
 HARDCODED_SKILL_PATH_RE = re.compile(r"plugins/v8ch/skills/[^\s`'\"]*/scripts/")
 
 CONSENSUS_REVIEW_AGENTS = (
@@ -138,7 +145,7 @@ def test_instruction_assets_do_not_hardcode_the_skill_script_path(asset: Path) -
     hit = match.group(0) if match else ""
     assert match is None, (
         f"{asset.relative_to(REPO_ROOT)} hardcodes '{hit}'. "
-        "Use ${CLAUDE_SKILL_DIR}/scripts/<name>.py instead."
+        "Write scripts/<name>.py and resolve it against this SKILL.md instead."
     )
 
 
@@ -146,9 +153,7 @@ def test_the_regex_catches_a_hardcoded_path() -> None:
     assert HARDCODED_SKILL_PATH_RE.search(
         "uv run plugins/v8ch/skills/consensus-review/scripts/recover_context.py 7"
     )
-    assert not HARDCODED_SKILL_PATH_RE.search(
-        "uv run ${CLAUDE_SKILL_DIR}/scripts/recover_context.py 7"
-    )
+    assert not HARDCODED_SKILL_PATH_RE.search("uv run scripts/recover_context.py 7")
 
 
 def write_manifest() -> None:
@@ -174,3 +179,37 @@ def write_manifest() -> None:
 
 if __name__ == "__main__":
     write_manifest()
+
+
+def test_the_fixture_report_scores_itself_consistently() -> None:
+    """The canonical report's heading, deductions, and final row must agree.
+
+    The fixture is what both repositories render from and what the frozen wire
+    format is built on, so a heading that contradicts its own breakdown teaches
+    every reader the wrong arithmetic. It shipped that way once: a 91/100
+    heading over deductions totalling 15.
+    """
+    report = (FIXTURES_DIR / "review-report.md").read_text(encoding="utf-8")
+
+    heading = re.search(r"^### Quality Score: (\d+)/100", report, re.MULTILINE)
+    assert heading, "the fixture report has no Quality Score heading"
+
+    deductions = [int(value) for value in re.findall(r"\|\s*[−-](\d+)\s*\|", report)]
+    final = re.search(r"\*\*Final score\*\*\s*\|\s*\*\*(\d+)/100\*\*", report)
+    assert deductions, "the fixture report has no deduction rows"
+    assert final, "the fixture report has no final score row"
+
+    assert int(heading.group(1)) == int(final.group(1)) == 100 - sum(deductions)
+
+
+def test_the_frozen_comment_carries_the_fixture_score() -> None:
+    """Metadata, rendered score line, and report heading are one number."""
+    comment = (FIXTURES_DIR / "review-comment-v2.md").read_text(encoding="utf-8")
+    report = (FIXTURES_DIR / "review-report.md").read_text(encoding="utf-8")
+    expected = re.search(r"^### Quality Score: (\d+)/100", report, re.MULTILINE)
+    assert expected
+    score = int(expected.group(1))
+
+    metadata = json.loads(comment.split("\n")[1])
+    assert metadata["score"] == score
+    assert f"*Score: {score}/100" in comment
