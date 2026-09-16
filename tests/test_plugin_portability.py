@@ -10,11 +10,12 @@ PLUGIN_ROOT = REPO_ROOT / "plugins/v8ch"
 
 # Codex performs no substitution in SKILL.md. Instruction assets must resolve
 # script paths from the installed SKILL.md location instead of naming a checkout,
-# cache, home directory, or other absolute installation path.
+# cache, home directory, other absolute installation path, or sibling skill.
 HARDCODED_SKILL_SCRIPT_PATH_RE = re.compile(
     r"plugins/[^\s/`'\"]+/skills/[^\s/`'\"]+/scripts/"
     r"|(?:~|/)[^\s`'\"]*/skills/[^\s/`'\"]+/scripts/"
     r"|[^\s`'\"]*cache/[^\s`'\"]*/skills/[^\s/`'\"]+/scripts/"
+    r"|(?:\.\./)+[A-Za-z0-9][A-Za-z0-9_-]*/scripts/"
 )
 UNEXPANDED_CODEX_PLACEHOLDER_RE = re.compile(
     r"\$\{[^}\n]+\}|<[A-Za-z0-9][A-Za-z0-9_-]*-skill-dir>"
@@ -54,6 +55,7 @@ def test_instruction_assets_use_portable_skill_script_paths(asset: Path) -> None
         "~/.codex/skills/remember/scripts/validate_memory.py",
         "/Users/alice/.codex/plugins/cache/v8ch/v8ch/2.0.1/skills/remember/"
         "scripts/validate_memory.py",
+        "../remember/scripts/validate_memory.py",
     ],
 )
 def test_path_regex_catches_hardcoded_skill_script_locations(
@@ -62,17 +64,8 @@ def test_path_regex_catches_hardcoded_skill_script_locations(
     assert HARDCODED_SKILL_SCRIPT_PATH_RE.search(f'python "{hardcoded_path}"')
 
 
-@pytest.mark.parametrize(
-    "portable_path",
-    [
-        "scripts/validate_memory.py",
-        "../remember/scripts/validate_memory.py",
-    ],
-)
-def test_path_regex_allows_relative_skill_script_references(
-    portable_path: str,
-) -> None:
-    assert HARDCODED_SKILL_SCRIPT_PATH_RE.search(portable_path) is None
+def test_path_regex_allows_current_skill_script_references() -> None:
+    assert HARDCODED_SKILL_SCRIPT_PATH_RE.search("scripts/validate_memory.py") is None
 
 
 @pytest.mark.parametrize(
