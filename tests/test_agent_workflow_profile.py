@@ -15,6 +15,25 @@ QUALITY_COMMANDS = [
     "uv run mypy",
     "uv run pytest",
 ]
+SETUP_COMMANDS = {"npm ci", "uv sync"}
+DOCUMENTED_COMMAND_BLOCKS = [
+    (
+        "README.md",
+        "## Development",
+        (
+            "Install the locked Python and Node development dependencies:",
+            "Run the repository quality commands:",
+        ),
+    ),
+    (
+        "CODING_STANDARDS.md",
+        "## Quality Checks",
+        (
+            "Install the locked development dependencies, then run the same checks "
+            "used by\nCI before pushing:",
+        ),
+    ),
+]
 EXPECTED_PROFILE = {
     "tracking": "required",
     "merge_method": "rebase",
@@ -62,6 +81,42 @@ def assert_quality_commands_in_ci(
     assert not missing, f"CI workflow is missing profile quality commands: {missing}"
 
 
+def markdown_section(text: str, heading: str) -> str:
+    match = re.search(rf"(?ms)^{re.escape(heading)}\n(?P<section>.*?)(?=^## |\Z)", text)
+    assert match is not None, f"documented section is missing: {heading}"
+    return match.group("section")
+
+
+def command_block_after(section: str, label: str) -> str:
+    matches = list(
+        re.finditer(
+            rf"^{re.escape(label)}\n\n```(?:sh|bash)\n(?P<commands>.*?)\n```",
+            section,
+            flags=re.DOTALL | re.MULTILINE,
+        )
+    )
+    assert len(matches) == 1, f"expected one command block after: {label}"
+    return matches[0].group("commands")
+
+
+def assert_documented_commands(
+    text: str, section_heading: str, block_labels: tuple[str, ...], expected: set[str]
+) -> None:
+    section = markdown_section(text, section_heading)
+    actual = {
+        line.strip()
+        for label in block_labels
+        for line in command_block_after(section, label).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    if actual != expected:
+        raise AssertionError(
+            f"documented commands differ; missing: {missing}; unexpected: {unexpected}"
+        )
+
+
 def test_agent_workflow_profile_matches_pinned_contract() -> None:
     agents_text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
     profile = load_profile(agents_text)
@@ -94,17 +149,62 @@ def test_missing_ci_command_diagnostic_names_full_command() -> None:
         assert_quality_commands_in_ci(QUALITY_COMMANDS, {"npm run lint:md"})
 
 
-@pytest.mark.parametrize("document", ["README.md", "CODING_STANDARDS.md"])
-def test_documented_quality_commands_match_profile(document: str) -> None:
+@pytest.mark.parametrize(
+    ("document", "section_heading", "block_labels"), DOCUMENTED_COMMAND_BLOCKS
+)
+def test_documented_quality_commands_match_profile(
+    document: str, section_heading: str, block_labels: tuple[str, ...]
+) -> None:
     text = (REPO_ROOT / document).read_text(encoding="utf-8")
+    profile = load_profile((REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8"))
+    expected = SETUP_COMMANDS | set(profile["quality_commands"])
 
-    for command in ["uv sync", "npm ci", *QUALITY_COMMANDS]:
-        assert command in text
-    for bare_command in [
-        "black --check .",
-        "ruff check .",
-        "ruff format --check .",
-        "mypy",
-        "pytest",
-    ]:
-        assert f"\n{bare_command}\n" not in text
+    assert_documented_commands(text, section_heading, block_labels, expected)
+
+
+@pytest.mark.parametrize(
+    ("document", "section_heading", "block_labels"), DOCUMENTED_COMMAND_BLOCKS
+)
+def test_documented_command_check_rejects_suffixed_governed_command(
+    document: str, section_heading: str, block_labels: tuple[str, ...]
+) -> None:
+    text = (REPO_ROOT / document).read_text(encoding="utf-8")
+    expected = SETUP_COMMANDS | set(QUALITY_COMMANDS)
+    text = text.replace(
+        "uv run pytest\n```",
+        "uv run pytest --ignore=tests/test_agent_workflow_profile.py\n```",
+        1,
+    )
+
+    with pytest.raises(AssertionError, match=r"unexpected: .*--ignore"):
+        assert_documented_commands(text, section_heading, block_labels, expected)
+
+
+@pytest.mark.parametrize(
+    ("document", "section_heading", "block_labels"), DOCUMENTED_COMMAND_BLOCKS
+)
+def test_documented_command_check_rejects_extra_governed_command(
+    document: str, section_heading: str, block_labels: tuple[str, ...]
+) -> None:
+    text = (REPO_ROOT / document).read_text(encoding="utf-8")
+    expected = SETUP_COMMANDS | set(QUALITY_COMMANDS)
+    text = text.replace("uv run pytest\n```", "uv run pytest\nuv run pylint\n```", 1)
+
+    with pytest.raises(AssertionError, match=r"unexpected: \['uv run pylint'\]"):
+        assert_documented_commands(text, section_heading, block_labels, expected)
+
+
+@pytest.mark.parametrize(
+    ("document", "section_heading", "block_labels"), DOCUMENTED_COMMAND_BLOCKS
+)
+def test_documented_command_check_ignores_unrelated_examples(
+    document: str, section_heading: str, block_labels: tuple[str, ...]
+) -> None:
+    text = (REPO_ROOT / document).read_text(encoding="utf-8")
+    expected = SETUP_COMMANDS | set(QUALITY_COMMANDS)
+    nested_example = "\n### Unrelated Example\n\n```sh\npytest --fixtures\n```\n"
+    outside_example = "\n## Unrelated Section\n\n```sh\nruff check example.py\n```\n"
+    text = text.replace(section_heading, section_heading + nested_example, 1)
+    text += outside_example
+
+    assert_documented_commands(text, section_heading, block_labels, expected)
