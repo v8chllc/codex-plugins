@@ -10,8 +10,12 @@ Routes `/recommend` commands to memory recommendation workflows.
 See `../remember/references/types.md` for curated memory entry templates.
 See `../remember/references/procedural-targets.md` for approved procedural write targets.
 See `../remember/references/journal-format.md` for journal entry format and dedupe marker spec.
-Use `../remember/scripts/validate_memory.py` as a validation preflight before
-applying any approved memory changes.
+Use the `v8ch:remember` skill's `scripts/validate_memory.py` as a validation
+preflight before applying any approved memory changes. Codex lists each installed
+skill's `SKILL.md` path in the available-skills catalog. Find the `v8ch:remember`
+entry, resolve `scripts/validate_memory.py` against the directory containing its
+`SKILL.md`, and pass the resulting absolute path to Python. Do not invoke the
+validator through a repository-relative or current-skill-relative path.
 
 ---
 
@@ -43,8 +47,8 @@ Triggered by `/recommend curated`.
 6. Present recommendations only; do not write automatically.
 7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `../remember/references/types.md`.
 8. Ask which to apply.
-9. Before writing approved entries, run
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex`.
+9. Before writing approved entries, run the resolved validator with
+   `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
 10. Apply each approved entry to its own target. `context` replaces the single
@@ -70,8 +74,8 @@ Triggered by `/recommend session`.
 5. Resolve each procedural candidate to an approved target from `../remember/references/procedural-targets.md`. If no target fits, mark as unsupported.
 6. Dedupe curated candidates against `.remember/MEMORY.md`; dedupe procedural candidates against their respective target files.
 7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
-8. Before applying approved changes, run
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex`.
+8. Before applying approved changes, run the resolved validator with
+   `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
 9. Apply only approved changes:
@@ -94,8 +98,8 @@ Triggered by `/recommend procedural`.
 5. Read existing guidance in each resolved target file.
 6. Classify candidates as `add`, `update`, or `skip` against the file's current content.
 7. Propose a concise patch per target. Present for user review.
-8. Before applying approved changes, run
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex`.
+8. Before applying approved changes, run the resolved validator with
+   `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
 9. Apply only approved changes. Write only to files listed in `../remember/references/procedural-targets.md`.

@@ -30,6 +30,11 @@ See `references/procedural-targets.md` for the approved procedural target allowl
 Use `scripts/validate_memory.py` for deterministic memory validation, JSON
 reporting, and setup-aware Memory Fast-Track steering checks.
 
+Before invoking any bundled script, use this skill's path from the available-skills
+catalog to locate the directory containing this `SKILL.md`. Resolve the script's
+relative `scripts/...` path against that directory, then pass the resulting absolute
+path to Python. Do not run bundled scripts through repository-relative plugin paths.
+
 ---
 
 ## Trigger patterns
@@ -167,13 +172,14 @@ Triggered by `$remember setup` or natural language setup phrases.
 8. Do not create `AGENTS.md` and do not inject a memory-load directive.
 9. Confirm to the user with a summary of files created, existing files reused,
    directive cleanup performed, context migrated, and any manual review needed.
-10. Run validation and steering detection from the repository root:
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex --check-steering`.
+10. Run the resolved `scripts/validate_memory.py` with
+   `--root . --toolchain codex --check-steering`.
    Report the validation status and issues. Validation must not mutate files.
 11. If `AGENTS.md` is missing a `## Memory Fast-Track Workflow` section, report
    the gap and ask whether to append generated Codex-appropriate guidance.
-   Apply it only after user approval with:
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex --apply-fast-track`.
+   Apply it only after user approval by running the resolved
+   `scripts/validate_memory.py` with
+   `--root . --toolchain codex --apply-fast-track`.
    If `AGENTS.md` has related but non-matching fast-track guidance, avoid
    destructive edits and ask for manual review or explicit approval.
 
@@ -236,8 +242,8 @@ Triggered by "Remember that `<text>`" with no explicit type keyword.
 
 Triggered by `$remember session` or natural language journal phrases.
 
-Resolve `<remember-skill-dir>` to the directory containing this `SKILL.md`
-before running a bundled helper.
+Resolve bundled helper paths against the directory containing this `SKILL.md`
+as described above.
 
 **Goal:** Append one concise, deduplicated daily journal entry from valid,
 unsummarized lifecycle records.
@@ -254,8 +260,8 @@ was new or deduplicated.
 
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first and stop.
-2. List unsummarized segments with
-   `python "<remember-skill-dir>/scripts/turn_journal.py" unsummarized --root .`,
+2. List unsummarized segments by running the resolved
+   `scripts/turn_journal.py` with `unsummarized --root .`,
    which returns every valid v3 record from both platforms ascending by
    `captured_at`. This makes work from a prior context survive `/clear`. Legacy
    or malformed files in the store are skipped, never repaired. If no segments
@@ -274,8 +280,9 @@ was new or deduplicated.
    write one entry per platform. Before writing, scan every dated daily journal
    for that hash and reuse a matching entry.
 6. Only after the daily journal write succeeds, mark each source segment with
-   `summarized_at` and `summary_path`:
-   `python "<remember-skill-dir>/scripts/turn_journal.py" mark-summarized --root . --summary-path .remember/memory/YYYY-MM-DD.md`.
+   `summarized_at` and `summary_path` by running the resolved
+   `scripts/turn_journal.py` with
+   `mark-summarized --root . --summary-path .remember/memory/YYYY-MM-DD.md`.
    Keep source records unchanged when synthesis or its journal write fails; no
    segment is modified until the journal write succeeds.
 7. Confirm the summary path and the source segment count per platform. Leave
@@ -309,7 +316,8 @@ current definitions with `/hooks` before enabling either channel.
 2. Require exactly one channel: `stop-capture` or `session-end-capture`.
 3. Explain that channel's scope and ask the user to confirm hook trust if it has
    not already been confirmed.
-4. Run `python "<remember-skill-dir>/scripts/turn_journal.py" enable <channel> --root .`.
+4. Run the resolved `scripts/turn_journal.py` with
+   `enable <channel> --root .`.
 5. Report the enabled channel and its immutable project-local segment behavior.
 
 ### `$remember hook disable <channel>` and `$remember hook status <channel>`
@@ -323,9 +331,9 @@ confirms it.
 
 ### `$remember clean [--apply]`
 
-Run `python "<remember-skill-dir>/scripts/turn_journal.py" clean --root .` first
-and show the exact older, valid summarized segments eligible for removal. Apply
-deletion only by rerunning it with `--apply` after explicit approval.
+Run the resolved `scripts/turn_journal.py` with `clean --root .` first and show
+the exact older, valid summarized segments eligible for removal. Apply deletion
+only by rerunning it with `clean --root . --apply` after explicit approval.
 Retain the newest completed summary checkpoint with all its records, plus every
 unsummarized or malformed segment. Retention applies uniformly to every valid
 v3 segment regardless of `platform`.
@@ -351,7 +359,8 @@ Invoked by the `recommend` skill (`/recommend curated`).
 7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `references/types.md`.
 8. Ask which to apply. On approval, continue through Workflow C from duplicate check.
 9. Before writing approved entries, run validation:
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex`.
+   Run the resolved `scripts/validate_memory.py` with
+   `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
 
@@ -371,7 +380,8 @@ Invoked by the `recommend` skill (`/recommend session`).
 7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
 8. Apply only approved changes. For curated approvals, continue through Workflow C. For procedural approvals, continue through Workflow I.
 9. Before applying approved curated or procedural changes, run validation:
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex`.
+   Run the resolved `scripts/validate_memory.py` with
+   `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
 
@@ -391,7 +401,8 @@ Invoked by the `recommend` skill (`/recommend procedural`).
 7. Propose a concise patch per target. Present for user review.
 8. Apply only approved changes (Workflow I).
 9. Before applying approved procedural changes, run validation:
-   `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex`.
+   Run the resolved `scripts/validate_memory.py` with
+   `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
 
@@ -443,9 +454,9 @@ Triggered by `$remember review`, "review memory", "audit memories", or "clean up
 Triggered by `$remember validate`, `$remember validate --json`, "validate
 remember", or "validate memory".
 
-1. Run `scripts/validate_memory.py` from the repository root:
-   - Human-readable: `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex --check-steering`
-   - JSON: `python plugins/v8ch/skills/remember/scripts/validate_memory.py --root . --toolchain codex --check-steering --json`
+1. Run the resolved `scripts/validate_memory.py` from the project root:
+   - Human-readable arguments: `--root . --toolchain codex --check-steering`
+   - JSON arguments: `--root . --toolchain codex --check-steering --json`
 2. Validation checks `.remember/MEMORY.md` for required type sections, known
    entry markers, and required fields. A `<!-- context -->` entry there is an
    error (`context_entry_in_memory_file`); a leftover `## context` heading is a
