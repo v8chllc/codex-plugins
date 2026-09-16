@@ -38,3 +38,25 @@ read `CODING_STANDARDS.md`.
 
 Run the checks relevant to the files you changed. For broad changes, use the
 full quality suite documented in `CODING_STANDARDS.md`.
+
+## Agent workflow profile
+
+```yaml
+tracking: required
+merge_method: rebase
+quality_commands:
+  - npm run lint:md
+  - uv run black --check .
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy
+  - uv run pytest
+release_steps:
+  - whenever a file under plugins/<name>/ changes, bump the version in
+    plugins/<name>/.codex-plugin/plugin.json and the literal version in
+    tests/test_codex_marketplace.py in the same pull request
+prohibited_actions:
+  - never move private vault content into this public repository
+  - never merge; the sponsor merges
+synchronized_with: v8chllc/claude-plugins
+```
