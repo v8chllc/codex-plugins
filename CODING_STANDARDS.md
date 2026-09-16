@@ -41,13 +41,16 @@ directories for file-system behavior.
 
 ## Quality Checks
 
-Run the same checks used by CI before pushing:
+Install the locked development dependencies, then run the same checks used by
+CI before pushing:
 
 ```sh
+uv sync
+npm ci
 npm run lint:md
-black --check .
-ruff check .
-ruff format --check .
-mypy
-pytest
+uv run black --check .
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run pytest
 ```
