@@ -1,6 +1,6 @@
 {
   "name": "v8ch",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Reusable Codex CLI workflows for AI-assisted code review and project memory.",
   "author": {
     "name": "V8CH LLC",
