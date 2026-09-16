@@ -25,7 +25,11 @@ consensus-review skill directory. You never receive another reviewer's output.
    document you read under `Files examined`.
 2. **Trace the failure, do not assert it.** For each finding, name the input or
    state that reaches the defect and the observable wrong result. A finding with
-   no reachable path is LOW at most, and say what blocks it.
+   no reachable path is LOW at most, and say what blocks it. The exception is a
+   defect that is safe only because an invariant elsewhere holds: report it,
+   name the invariant, and grade it by the failure that follows if the
+   invariant moves. The synthesizer files those as latent findings and scores
+   them at that would-be severity.
 3. **Review the tests as code under review.** A test that asserts nothing, mocks
    the behavior it claims to verify, or passes whatever the implementation does
    is a correctness defect in its own right.

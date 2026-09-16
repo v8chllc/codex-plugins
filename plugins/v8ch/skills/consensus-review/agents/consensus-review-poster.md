@@ -33,7 +33,7 @@ directory; and the absolute path of the consensus-review skill directory.
      --cycle <cycle> \
      --status <status> \
      --delegation-mode <mode> \
-     --plan-source <plan-source> \
+     --plan-source "<plan-source>" \
      --reviewed-sha <sha> \
      --scope-basis <basis> \
      --files-touched <n> \

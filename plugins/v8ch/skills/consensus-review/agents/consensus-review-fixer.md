@@ -39,6 +39,12 @@ steering documents and manifests, plus the focused tests for what you changed.
 For each fix, run one mutation-oriented check: removing or inverting the fix must
 fail a named check. Record the command and the result.
 
+Every applied repair needs a confirmed mutation check: a finding marked `fixed`,
+or `partial` where code changed. Record an unconfirmable check as `not
+confirmed` and report `MUTATION_UNPROVEN` with those finding IDs; nothing is
+committed. A `declined` or `work-item-required` finding applies no repair and
+needs no mutation check.
+
 A quality failure you cannot resolve ends the run: report `QUALITY_FAILURES`
 with the failing commands and commit nothing.
 
@@ -88,6 +94,8 @@ Write one fix log to the scratch directory holding, in this order:
 
 A section with no entries contains `None.`
 
-Report the fix log path and one terminal word — `COMPLETE` when every finding has
-a disposition and the quality commands passed, `QUALITY_FAILURES` otherwise —
+Report the fix log path and one terminal word: `COMPLETE` when every finding has
+a disposition, every applied repair has a confirmed mutation check, and the
+quality commands passed; `MUTATION_UNPROVEN` when a repair is unproven;
+`QUALITY_FAILURES` when a quality command still fails —
 then stop.

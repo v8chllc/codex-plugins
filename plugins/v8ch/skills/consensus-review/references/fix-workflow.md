@@ -30,16 +30,26 @@ score-gap targeting: every current finding gets a disposition.
 
 ### 2. Read the fix log
 
-The fixer returns a path and one terminal word.
+The fixer returns a path and one terminal word. It emits no signal: this
+workflow returns an outcome and the skill emits the run's single terminal signal.
 
-- `QUALITY_FAILURES` — emit the `QUALITY_FAILURES` signal with the failing
-  commands and commit nothing. The run ends here.
+- `COMPLETE` — every finding carries a disposition, every applied repair carries
+  a confirmed mutation check, and the quality commands passed. Continue.
+- `MUTATION_UNPROVEN` — an applied repair (`fixed`, or `partial` where code
+  changed) has an unconfirmed mutation check. Commit nothing and return
+  `BLOCKERS_REMAIN` naming those findings: the commit body carries fix evidence,
+  so an unproven repair would record a claim nothing tested.
+- `QUALITY_FAILURES` — commit nothing and return `QUALITY_FAILURES` with the
+  failing commands.
 
   Leave the fixer's edits in the working tree. They are most of a repair, and
-  discarding them loses work with no record. Say in the final report that the
-  tree holds uncommitted changes, because the next invocation's default scope is
-  `git diff HEAD` and will review them as local work.
-- `COMPLETE` — continue.
+  discarding them loses work with no record. State in the final report that the
+  tree holds uncommitted changes and name them: a PR/MR re-run reviews the
+  platform diff, so those edits are **not** in the next cycle's scope. Commit or
+  discard them before re-running.
+- No files changed — nothing is committed or pushed, so `PUSH_COMPLETE`, which
+  reports pushed commits, never applies. Return `NO_CHANGE` with an empty SHA
+  list.
 
 ### 3. Verify the dispositions
 
@@ -70,13 +80,35 @@ Verify the current branch equals the PR/MR head ref:
 - `github`: `gh pr view <number> --json headRefName -q .headRefName`
 - `gitlab`: `glab mr view <number> -F json | jq -r .source_branch`
 
-On a mismatch, emit `ABORT` with `reason` `branch_mismatch` and do not push.
-Otherwise `git push`, then record the pushed commit SHAs.
+On a mismatch, `ABORT` with `reason` `branch_mismatch` and do not push. A failed
+query is `ABORT` with `reason` `command_failed`, also without pushing: an
+unanswered query is not a matching branch.
+
+Push to an explicit remote and ref rather than the branch's upstream, which may
+point at a fork or a stale remote:
+
+```bash
+git push origin HEAD:<head-ref>
+```
+
+A non-zero commit or push is `ABORT` with `reason` `command_failed`. The commit
+exists locally after a failed push, so name its SHA in `message`. On success,
+record the pushed commit SHAs.
 
 ### 6. Hand back to the review budget
 
-Return the commit SHAs, the work-item records, and the disposition counts to the
-orchestrator. It decides whether another review fits in the three-review budget.
+Return the outcome, the commit SHAs (or an empty list), the work-item records,
+and the disposition counts. The orchestrator routes on the first match, so two
+identical runs cannot end on different signals:
+
+1. A finding with no disposition, or outcome `MUTATION_UNPROVEN` —
+   `BLOCKERS_REMAIN`, whatever the budget allows.
+2. Outcome `QUALITY_FAILURES` — `QUALITY_FAILURES`.
+3. Budget remaining — start the next review cycle.
+4. Budget exhausted with `partial` or `work-item-required` findings —
+   `BLOCKERS_REMAIN`.
+5. Budget exhausted with pushed commits — `PUSH_COMPLETE`.
+6. Budget exhausted with nothing committed — `MAX_REVIEWS_REACHED`.
 
 ## Constraints and authority
 
