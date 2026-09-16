@@ -13,6 +13,7 @@ PLUGIN_ROOT = REPO_ROOT / "plugins/v8ch"
 # cache, home directory, other absolute installation path, or sibling skill.
 HARDCODED_SKILL_SCRIPT_PATH_RE = re.compile(
     r"plugins/[^\s/`'\"]+/skills/[^\s/`'\"]+/scripts/"
+    r"|(?:\./)?skills/[^\s/`'\"]+/scripts/"
     r"|(?:~|/)[^\s`'\"]*/skills/[^\s/`'\"]+/scripts/"
     r"|[^\s`'\"]*cache/[^\s`'\"]*/skills/[^\s/`'\"]+/scripts/"
     r"|(?:\.\./)+[A-Za-z0-9][A-Za-z0-9_-]*/scripts/"
@@ -50,6 +51,8 @@ def test_instruction_assets_use_portable_skill_script_paths(asset: Path) -> None
     "hardcoded_path",
     [
         "plugins/v8ch/skills/remember/scripts/validate_memory.py",
+        "skills/remember/scripts/validate_memory.py",
+        "./skills/remember/scripts/validate_memory.py",
         "/opt/codex/plugins/v8ch/skills/remember/scripts/validate_memory.py",
         "/var/cache/codex/v8ch/2.0.1/skills/remember/scripts/validate_memory.py",
         "~/.codex/skills/remember/scripts/validate_memory.py",
