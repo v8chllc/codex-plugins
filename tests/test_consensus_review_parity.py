@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+PLUGIN_ROOT = REPO_ROOT / "plugins/v8ch"
 SKILL_DIR = REPO_ROOT / "plugins/v8ch/skills/consensus-review"
 # Codex plugins cannot register agents, so the six roles ship as prompt assets
 # inside the skill. The Claude copy of this test reads them from the plugin's
@@ -35,6 +36,7 @@ MANIFEST_PATH = SKILL_DIR / "parity-manifest.json"
 # the directory holding SKILL.md. A literal plugin path breaks whenever the
 # plugin moves, and a ${...} placeholder would reach the model unexpanded.
 HARDCODED_SKILL_PATH_RE = re.compile(r"plugins/v8ch/skills/[^\s`'\"]*/scripts/")
+UNEXPANDED_CODEX_PLACEHOLDER_RE = re.compile(r"\$\{[^}\n]+\}|<remember-skill-dir>")
 
 CONSENSUS_REVIEW_AGENTS = (
     "architecture-reviewer",
@@ -128,24 +130,26 @@ def test_two_scripts_differing_only_in_docstring_hash_alike(tmp_path: Path) -> N
 
 
 def instruction_assets() -> list[Path]:
-    """Return the skill and role assets that must stay path-portable."""
-    return sorted(
-        [
-            SKILL_DIR / "SKILL.md",
-            *(SKILL_DIR / "references").glob("*.md"),
-            *(AGENTS_DIR / f"{name}.md" for name in CONSENSUS_REVIEW_AGENTS),
-        ]
-    )
+    """Return every plugin instruction asset that must stay path-portable."""
+    return sorted((PLUGIN_ROOT / "skills").rglob("*.md"))
 
 
 @pytest.mark.parametrize("asset", instruction_assets(), ids=lambda path: path.name)
-def test_instruction_assets_do_not_hardcode_the_skill_script_path(asset: Path) -> None:
+def test_instruction_assets_use_portable_skill_script_paths(asset: Path) -> None:
     text = asset.read_text(encoding="utf-8")
-    match = HARDCODED_SKILL_PATH_RE.search(text)
-    hit = match.group(0) if match else ""
-    assert match is None, (
-        f"{asset.relative_to(REPO_ROOT)} hardcodes '{hit}'. "
+    hardcoded_path = HARDCODED_SKILL_PATH_RE.search(text)
+    path_hit = hardcoded_path.group(0) if hardcoded_path else ""
+    assert hardcoded_path is None, (
+        f"{asset.relative_to(REPO_ROOT)} hardcodes '{path_hit}'. "
         "Write scripts/<name>.py and resolve it against this SKILL.md instead."
+    )
+
+    placeholder = UNEXPANDED_CODEX_PLACEHOLDER_RE.search(text)
+    placeholder_hit = placeholder.group(0) if placeholder else ""
+    assert placeholder is None, (
+        f"{asset.relative_to(REPO_ROOT)} contains the unexpanded Codex "
+        f"placeholder '{placeholder_hit}'. Resolve installed skill paths from "
+        "the available-skills catalog instead."
     )
 
 
@@ -154,6 +158,18 @@ def test_the_regex_catches_a_hardcoded_path() -> None:
         "uv run plugins/v8ch/skills/consensus-review/scripts/recover_context.py 7"
     )
     assert not HARDCODED_SKILL_PATH_RE.search("uv run scripts/recover_context.py 7")
+
+
+def test_the_regex_catches_unexpanded_codex_placeholders() -> None:
+    assert UNEXPANDED_CODEX_PLACEHOLDER_RE.search(
+        'python "<remember-skill-dir>/scripts/validate_memory.py"'
+    )
+    assert UNEXPANDED_CODEX_PLACEHOLDER_RE.search(
+        'python "${PLUGIN_ROOT}/skills/remember/scripts/validate_memory.py"'
+    )
+    assert not UNEXPANDED_CODEX_PLACEHOLDER_RE.search(
+        "resolve scripts/validate_memory.py against the installed skill directory"
+    )
 
 
 def write_manifest() -> None:
