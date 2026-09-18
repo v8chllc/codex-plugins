@@ -48,7 +48,6 @@ Run the repository quality commands:
 
 ```sh
 npm run lint:md
-uv run black --check .
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy

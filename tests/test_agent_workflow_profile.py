@@ -9,7 +9,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PROFILE_HEADING = "## Agent workflow profile"
 QUALITY_COMMANDS = [
     "npm run lint:md",
-    "uv run black --check .",
     "uv run ruff check .",
     "uv run ruff format --check .",
     "uv run mypy",
@@ -137,7 +136,7 @@ def test_profile_quality_commands_match_ci() -> None:
     python_checks = {
         command
         for command in commands
-        if any(tool in command.split() for tool in ("black", "ruff", "mypy", "pytest"))
+        if any(tool in command.split() for tool in ("ruff", "mypy", "pytest"))
     }
     assert all(command.startswith("uv run ") for command in python_checks)
 
