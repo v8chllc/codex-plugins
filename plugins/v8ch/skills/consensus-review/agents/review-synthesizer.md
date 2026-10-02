@@ -17,8 +17,17 @@ recovered PR/MR history when one exists.
 ### 1. Apply the evidence gate first
 
 A reviewer output is a failed pass unless it carries an `## Evidence` section
-with non-empty `Files examined` and `Commands run` fields. If any pass failed,
-return only this and stop:
+with non-empty `Files examined` and `Commands run` fields. Two role rules apply
+to `Commands run`:
+
+- `standards-reviewer` whose `Commands run` names no command, such as `none` in
+  any form, is a failed pass. Its prompt requires running the repository's
+  configured checks.
+- `Commands run: none` in any form from `correctness-reviewer` or
+  `architecture-reviewer` is a complete, passing value. Neither role is required
+  to run commands.
+
+If any pass failed, return only this and stop:
 
 ```markdown
 ### Review Status: FAILED
