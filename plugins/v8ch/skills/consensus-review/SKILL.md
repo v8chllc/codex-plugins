@@ -143,6 +143,11 @@ A reviewer output without a non-empty `## Evidence` section carrying both
 second failure, emit `EVIDENCE_FAILED` with the failed pass names and stop
 without a score.
 
+`correctness-reviewer` and `architecture-reviewer` may run commands but are not
+required to, so `Commands run: none` from either is a complete, passing value
+and never by itself a reason to rerun that pass. `standards-reviewer` is not
+covered: its prompt requires running the configured checks.
+
 ### 7. Re-check the working tree
 
 Take the snapshot again and compare it to step 4. On any difference, emit
