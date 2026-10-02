@@ -141,7 +141,7 @@ One batch, concurrently. Each gets the diff, the changed-file context, the plan,
 A pass fails in either of two cases:
 
 - The reviewer output has no `## Evidence` section, or its `Files examined` or
-  `Commands run` field is missing or empty. Each field must be non-empty.
+  `Commands run` field is missing or empty.
 - `standards-reviewer`'s `Commands run` names no command, such as `none` in any
   form, including `none (read-only review)`. Its prompt requires running the
   repository's configured checks, so a value that names none is a failed pass.
