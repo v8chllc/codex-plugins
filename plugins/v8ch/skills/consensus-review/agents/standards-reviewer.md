@@ -131,5 +131,5 @@ Example of a well-formed finding:
 ```
 
 The `Evidence` section is mandatory and both fields must be non-empty.
-`Commands run` names the commands you ran; `none`, in any form, fails the
-evidence gate. Stop after it.
+`Commands run` names the commands you ran; a value that names no command, such
+as `none` in any form, fails the evidence gate. Stop after it.
