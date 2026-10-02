@@ -91,7 +91,7 @@ Return exactly these sections:
 ## Evidence
 
 - **Files examined:** <comma-separated paths actually read>
-- **Commands run:** <comma-separated commands, or none (read-only review)>
+- **Commands run:** <comma-separated commands you ran, including any that failed to start>
 ```
 
 `Plan Divergences` and `Quality Findings` each contain `None.` or findings in
@@ -130,5 +130,6 @@ Example of a well-formed finding:
 **Fix:** Annotate the parameters and return type as `dict[str, str]`.
 ```
 
-The `Evidence` section is mandatory and both fields must be non-empty. Stop
-after it.
+The `Evidence` section is mandatory and both fields must be non-empty.
+`Commands run` names the commands you ran; `none`, in any form, fails the
+evidence gate. Stop after it.

@@ -138,16 +138,21 @@ One batch, concurrently. Each gets the diff, the changed-file context, the plan,
 
 ### 6. Apply the evidence gate
 
-A reviewer output without a non-empty `## Evidence` section carrying both
-`Files examined` and `Commands run` is a failed pass. Rerun that pass once. On a
-second failure, emit `EVIDENCE_FAILED` with the failed pass names and stop
-without a score.
+A pass fails in either of two cases:
+
+- The reviewer output has no non-empty `## Evidence` section carrying both
+  `Files examined` and `Commands run`.
+- `standards-reviewer`'s `Commands run` names no command, such as `none` in any
+  form, including `none (read-only review)`. Its prompt requires running the
+  repository's configured checks, so a value that names none is a failed pass.
+
+Rerun a failed pass once. On a second failure, emit `EVIDENCE_FAILED` with the
+failed pass names and stop without a score.
 
 `correctness-reviewer` and `architecture-reviewer` may run commands but are not
-required to, so `Commands run: none` from either, in any form such as the
+required to, so `Commands run: none` from either, in any form such as their
 templates' `none (read-only review)`, is a complete, passing value and never by
-itself a reason to rerun that pass. `standards-reviewer` is not
-covered: its prompt requires running the configured checks.
+itself a reason to rerun that pass.
 
 ### 7. Re-check the working tree
 
