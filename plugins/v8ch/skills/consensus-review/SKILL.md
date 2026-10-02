@@ -142,17 +142,17 @@ A pass fails in either of two cases:
 
 - The reviewer output has no `## Evidence` section, or its `Files examined` or
   `Commands run` field is missing or empty.
-- `standards-reviewer`'s `Commands run` names no command, such as `none` in any
-  form, including `none (read-only review)`. Its prompt requires running the
-  repository's configured checks, so a value that names none is a failed pass.
+- `standards-reviewer` whose `Commands run` names no command, such as `none` in
+  any form, including `none (read-only review)`, is a failed pass. Its prompt
+  requires running the repository's configured checks.
 
 Rerun a failed pass once. On a second failure, emit `EVIDENCE_FAILED` with the
 failed pass names and stop without a score.
 
 `correctness-reviewer` and `architecture-reviewer` may run commands but are not
-required to, so `Commands run: none` from either, in any form such as their
-templates' `none (read-only review)`, is a complete, passing value and never by
-itself a reason to rerun that pass.
+required to. `Commands run: none` in any form from `correctness-reviewer` or
+`architecture-reviewer` is a complete, passing value and never by itself a
+reason to rerun that pass.
 
 ### 7. Re-check the working tree
 
@@ -170,6 +170,13 @@ not to write, rather than relying on this check alone.
 Run `review-synthesizer` with all three reviewer outputs labeled in full, the
 delegation mode, the plan source, and `RECOVERED_CONTEXT`. Repeat step 7
 afterwards.
+
+The synthesizer applies the same evidence gate as step 6. If it returns
+`### Review Status: FAILED`, each reviewer it names failed its pass. Rerun each
+named reviewer whose pass has not already failed once in this cycle, apply step
+6 to its new output, and synthesize again. A pass that fails a second time, at
+either gate, ends the review: emit `EVIDENCE_FAILED` with the failed pass names
+and stop without a score.
 
 ### 9. Post or return
 

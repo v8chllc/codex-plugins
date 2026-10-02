@@ -21,8 +21,8 @@ with non-empty `Files examined` and `Commands run` fields. Two role rules apply
 to `Commands run`:
 
 - `standards-reviewer` whose `Commands run` names no command, such as `none` in
-  any form, is a failed pass. Its prompt requires running the repository's
-  configured checks.
+  any form, including `none (read-only review)`, is a failed pass. Its prompt
+  requires running the repository's configured checks.
 - `Commands run: none` in any form from `correctness-reviewer` or
   `architecture-reviewer` is a complete, passing value. Neither role is required
   to run commands.
