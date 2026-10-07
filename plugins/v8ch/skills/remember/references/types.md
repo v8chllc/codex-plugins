@@ -1,6 +1,6 @@
 # Memory Types
 
-Five structured types, all curated memory in `.remember/MEMORY.md`. Use these
+Structured types, all curated memory in `.remember/MEMORY.md`. Use these
 templates when writing entries.
 
 ---
@@ -133,7 +133,7 @@ Status: <open | blocked>
 Next action: <specific next step>
 Owner: <optional>
 Created: <YYYY-MM-DD>
-Work item: <optional link/id if created>
+Work item: <legacy; leave empty — promotion removes the todo>
 ```
 
 Examples:
