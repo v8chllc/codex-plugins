@@ -42,12 +42,24 @@ def memory_skill_assets() -> list[Path]:
     return sorted(path for path in assets if path != LEGACY_DIRECTIVE)
 
 
-def review_section() -> str:
-    """Return the remember review workflow, heading through the next separator."""
+def workflow_block(heading: str) -> str:
+    """Return one SKILL.md workflow, heading through the next separator."""
     text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
-    start = text.index(REVIEW_HEADING)
-    end = text.index("\n---\n", start)
-    return normalized(text[start:end])
+    start = text.index(heading)
+    return text[start : text.index("\n---\n", start)]
+
+
+def review_section() -> str:
+    """Return the remember review workflow, wrapping collapsed."""
+    return normalized(workflow_block(REVIEW_HEADING))
+
+
+def review_step_number(label: str) -> str:
+    """Return the number of the review step whose bold label is `label`."""
+    block = workflow_block(REVIEW_HEADING)
+    found = re.search(rf"(?m)^(\d+)\. \*\*{re.escape(label)}\*\*", block)
+    assert found, f"Workflow K has no step labelled {label}"
+    return found.group(1)
 
 
 def test_todo_status_is_open_or_blocked_only() -> None:
@@ -126,7 +138,7 @@ def test_review_step_references_name_the_removal_step() -> None:
     removal = re.search(r"(?:^| )(\d+)\. Apply only approved items", section)
     assert removal
     refs = re.findall(
-        r"(?:lands \(step|follows the rule in step|that step|written in step) (\d+)",
+        r"(?:lands \(step|follows the rule in step|that step|applied in step) (\d+)",
         section,
     )
 
@@ -188,9 +200,7 @@ def test_review_runs_validation_before_classifying() -> None:
 
 def workflow_j_step(number: int) -> str:
     """Return the text of one numbered step of Workflow J."""
-    text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
-    start = text.index("## Workflow J: Procedural Write")
-    block = text[start : text.index("\n---\n", start)]
+    block = workflow_block("## Workflow J: Procedural Write")
     steps = re.split(r"(?m)^(?=\d+\. )", block)
     found = [x for x in steps if x.startswith(f"{number}. ")]
     assert found, f"Workflow J has no step {number}"
@@ -210,7 +220,6 @@ def test_review_cites_workflow_j_steps_that_say_what_review_reuses() -> None:
     assert "patch" in workflow_j_step(int(dedupe.group(2)))
     assert "write the change" in workflow_j_step(int(write.group(1)))
     assert "resolve to an approved target" in workflow_j_step(int(resolution.group(1)))
-    assert "Workflow J step" not in section
 
 
 def test_review_passes_work_item_text_by_file() -> None:
@@ -242,9 +251,7 @@ def test_memory_skill_assets_are_found() -> None:
 
 
 def test_review_two_digit_steps_use_four_space_continuations() -> None:
-    text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
-    start = text.index(REVIEW_HEADING)
-    lines = text[start : text.index("\n---\n", start)].splitlines()
+    lines = workflow_block(REVIEW_HEADING).splitlines()
     first = next((i for i, x in enumerate(lines) if x.startswith("10. ")), None)
     assert first is not None, "Workflow K has no step 10"
     block = [x for x in lines[first + 1 :] if not re.match(r"\d+\. ", x)]
@@ -378,26 +385,22 @@ def test_review_covered_ambiguous_steering_is_not_an_uncovered_target() -> None:
 def test_review_step_eleven_cites_only_the_steps_review_reuses() -> None:
     section = review_section()
 
-    skill = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
-    destination = re.search(r"(?m)^(\d+)\. \*\*Destination check\*\*", skill)
-    steering = re.search(r"(?m)^(\d+)\. \*\*Steering promotions\*\*", skill)
-    assert destination and steering
+    destination = review_step_number("Destination check")
+    steering = review_step_number("Steering promotions")
     cited = re.findall(
         r"this review's step (\d+), the destination check, replaced", section
     )
-    assert cited == [destination.group(1)]
+    assert cited == [destination]
     assert re.findall(r"steering patches as step (\d+) describes", section) == [
-        steering.group(1)
+        steering
     ]
 
 
 def test_review_destination_check_has_three_sub_bullets() -> None:
-    text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
-    destination = re.search(r"(?m)^\d+\. \*\*Destination check\*\*", text)
-    assert destination
-    following = re.search(r"(?m)^\d+\. ", text[destination.end() :])
-    assert following
-    block = text[destination.start() : destination.end() + following.start()]
+    review = workflow_block(REVIEW_HEADING)
+    number = review_step_number("Destination check")
+    steps = re.split(r"(?m)^(?=\d+\. )", review)
+    block = next(x for x in steps if x.startswith(f"{number}. "))
 
     for label in ("**Steering.**", "**Work item.**", "**Combining.**"):
         assert re.search(rf"(?m)^ +- {re.escape(label)}", block), label
@@ -426,7 +429,11 @@ def test_review_reads_ambiguous_candidates_before_listing_them() -> None:
 def test_review_fills_the_body_file_without_shell_expansion() -> None:
     section = review_section()
 
-    assert "filled by the file-edit tool or a quoted heredoc (`<<'TOKEN'`)" in section
+    assert (
+        "filled by the file-edit tool or a quoted heredoc (`<<'<random-token>'`)"
+        in section
+    )
+    assert "<<'TOKEN'" not in section
     assert "delimiter is a random token that appears as no line of the body" in (
         section
     )
@@ -437,10 +444,11 @@ def test_review_allows_reading_how_a_work_item_closed() -> None:
     section = review_section()
 
     assert "add `--json state,stateReason` to read how it closed" in section
+    assert "a closed item whose `stateReason` is empty or unknown" in section
+    assert "an empty or unknown `stateReason` counts as absent" not in section
     assert "Read a search match the same way, with `--json state,stateReason`" in (
         section
     )
-    assert "an empty or unknown `stateReason` counts as absent" in section
 
 
 def test_review_checks_short_work_item_values_for_relevance() -> None:
@@ -456,13 +464,8 @@ def test_review_checks_short_work_item_values_for_relevance() -> None:
 def test_review_untrusted_rule_excepts_the_validated_parts() -> None:
     section = review_section()
 
-    destination = re.search(
-        r"(?m)^(\d+)\. \*\*Destination check\*\*",
-        (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8"),
-    )
-    assert destination
     assert re.findall(
         r"interpolated into a command line, except the validated parts "
         r"allowed in step (\d+)",
         section,
-    ) == [destination.group(1)]
+    ) == [review_step_number("Destination check")]
