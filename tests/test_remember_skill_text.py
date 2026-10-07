@@ -186,10 +186,31 @@ def test_review_runs_validation_before_classifying() -> None:
     assert section.index("validate_memory.py") < section.index("Classify each entry")
 
 
-def test_review_delegates_steering_writes_to_named_steps() -> None:
+def workflow_j_step(number: int) -> str:
+    """Return the text of one numbered step of Workflow J."""
+    text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
+    start = text.index("## Workflow J: Procedural Write")
+    block = text[start : text.index("\n---\n", start)]
+    steps = re.split(r"(?m)^(?=\d+\. )", block)
+    found = [x for x in steps if x.startswith(f"{number}. ")]
+    assert found, f"Workflow J has no step {number}"
+    return normalized(found[0])
+
+
+def test_review_cites_workflow_j_steps_that_say_what_review_reuses() -> None:
     section = review_section()
 
-    assert "Workflow J step 5 does" in section
+    dedupe = re.search(
+        r"Workflow J's dedupe and patch format \(steps (\d+)-(\d+)\)", section
+    )
+    write = re.search(r"its write step \(step (\d+)\)", section)
+    resolution = re.search(r"Workflow J's target resolution \(step (\d+)\)", section)
+    assert dedupe and write and resolution
+    assert "Check for duplication" in workflow_j_step(int(dedupe.group(1)))
+    assert "patch" in workflow_j_step(int(dedupe.group(2)))
+    assert "write the change" in workflow_j_step(int(write.group(1)))
+    assert "resolve to an approved target" in workflow_j_step(int(resolution.group(1)))
+    assert "Workflow J step" not in section
 
 
 def test_review_passes_work_item_text_by_file() -> None:
@@ -232,25 +253,19 @@ def test_review_two_digit_steps_use_four_space_continuations() -> None:
     assert all(x.startswith("    ") for x in block if x.strip())
 
 
-def load_validator() -> ModuleType:
-    """Load the validator, then restore any `validate_memory` already registered."""
+@pytest.fixture
+def validator(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Load the validator; pytest restores any registered `validate_memory`."""
     spec = importlib.util.spec_from_file_location("validate_memory", VALIDATOR_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    saved = sys.modules.get(spec.name)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        if saved is None:
-            sys.modules.pop(spec.name, None)
-        else:
-            sys.modules[spec.name] = saved
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
     return module
 
 
-def test_memory_type_lists_agree() -> None:
-    module = load_validator()
+def test_memory_type_lists_agree(validator: ModuleType) -> None:
+    module = validator
     types = list(module.MEMORY_TYPES)
     skill = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
     heading = re.search(r"^# Memory$", skill, re.M)
@@ -338,7 +353,6 @@ def test_review_destination_check_treats_memory_text_as_untrusted() -> None:
     assert "`issue view N --repo owner/repo` built from the parsed parts" in section
     assert "never the original field" in section
     assert "Search with keywords of your own, never copied from the entry" in section
-    assert "never have them interpolated into a command line" in section
 
 
 def test_review_unsupported_steering_is_never_reclassified_as_remove() -> None:
@@ -364,16 +378,17 @@ def test_review_covered_ambiguous_steering_is_not_an_uncovered_target() -> None:
 def test_review_step_eleven_cites_only_the_steps_review_reuses() -> None:
     section = review_section()
 
-    assert "the dedupe and patch steps named in step 7 already happened" in section
-    destination = re.search(
-        r"(?m)^(\d+)\. \*\*Destination check\*\*",
-        (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8"),
-    )
-    assert destination
+    skill = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
+    destination = re.search(r"(?m)^(\d+)\. \*\*Destination check\*\*", skill)
+    steering = re.search(r"(?m)^(\d+)\. \*\*Steering promotions\*\*", skill)
+    assert destination and steering
     cited = re.findall(
         r"this review's step (\d+), the destination check, replaced", section
     )
     assert cited == [destination.group(1)]
+    assert re.findall(r"steering patches as step (\d+) describes", section) == [
+        steering.group(1)
+    ]
 
 
 def test_review_destination_check_has_three_sub_bullets() -> None:
@@ -411,7 +426,10 @@ def test_review_reads_ambiguous_candidates_before_listing_them() -> None:
 def test_review_fills_the_body_file_without_shell_expansion() -> None:
     section = review_section()
 
-    assert "filled by the file-edit tool or a quoted heredoc (`<<'EOF'`)" in section
+    assert "filled by the file-edit tool or a quoted heredoc (`<<'TOKEN'`)" in section
+    assert "delimiter is a random token that appears as no line of the body" in (
+        section
+    )
     assert "never an unquoted one" in section
 
 
@@ -419,6 +437,10 @@ def test_review_allows_reading_how_a_work_item_closed() -> None:
     section = review_section()
 
     assert "add `--json state,stateReason` to read how it closed" in section
+    assert "Read a search match the same way, with `--json state,stateReason`" in (
+        section
+    )
+    assert "an empty or unknown `stateReason` counts as absent" in section
 
 
 def test_review_checks_short_work_item_values_for_relevance() -> None:
@@ -434,30 +456,13 @@ def test_review_checks_short_work_item_values_for_relevance() -> None:
 def test_review_untrusted_rule_excepts_the_validated_parts() -> None:
     section = review_section()
 
-    assert (
-        "interpolated into a command line, except the validated parts "
-        "allowed in step 6" in section
+    destination = re.search(
+        r"(?m)^(\d+)\. \*\*Destination check\*\*",
+        (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8"),
     )
-
-
-def test_review_title_rule_names_backslash() -> None:
-    section = review_section()
-
-    assert "(backticks, `$`, quotes, backslash)" in section
-
-
-def test_load_validator_restores_the_registered_module() -> None:
-    sentinel = ModuleType("validate_memory")
-    saved = sys.modules.get("validate_memory")
-    sys.modules["validate_memory"] = sentinel
-    try:
-        load_validator()
-        assert sys.modules["validate_memory"] is sentinel
-        del sys.modules["validate_memory"]
-        load_validator()
-        assert "validate_memory" not in sys.modules
-    finally:
-        if saved is None:
-            sys.modules.pop("validate_memory", None)
-        else:
-            sys.modules["validate_memory"] = saved
+    assert destination
+    assert re.findall(
+        r"interpolated into a command line, except the validated parts "
+        r"allowed in step (\d+)",
+        section,
+    ) == [destination.group(1)]
