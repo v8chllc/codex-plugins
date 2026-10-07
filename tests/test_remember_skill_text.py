@@ -4,6 +4,7 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -39,6 +40,21 @@ def memory_skill_assets() -> list[Path]:
         *(SKILLS_DIR / "recommend").rglob("*.md"),
     ]
     return sorted(path for path in assets if path != LEGACY_DIRECTIVE)
+
+
+def script_dir_modules(before: set[str]) -> list[str]:
+    """Return modules added since `before` that came from the validator's directory."""
+    script_dir = VALIDATOR_PATH.parent
+    added = []
+    for name, module in list(sys.modules.items()):
+        if name in before:
+            continue
+        origin = getattr(module, "__file__", None)
+        if name == "validate_memory" or (
+            origin and Path(origin).resolve().is_relative_to(script_dir)
+        ):
+            added.append(name)
+    return added
 
 
 def review_section() -> str:
@@ -155,10 +171,7 @@ def test_review_destination_check_is_per_destination() -> None:
 def test_review_retains_entries_with_unsupported_steering_candidates() -> None:
     section = review_section()
 
-    assert (
-        "Retain an entry that has an unsupported or ambiguous steering candidate"
-        in section
-    )
+    assert "Retain an entry that has an uncovered steering target" in section
 
 
 def test_review_flags_more_public_work_item_destinations() -> None:
@@ -200,8 +213,10 @@ def test_review_passes_work_item_text_by_file() -> None:
     assert "`--body-file`" in section
     assert "title and description both derive from it" in section
     assert "fresh summary of your own that is never copied from the entry" in section
+    assert "Keep shell metacharacters (backticks, `$`, quotes) out of the title" in (
+        section
+    )
     assert "single-quoted" not in section
-    assert "never interpolate entry text into the command line" in section
 
 
 def test_review_step_ten_covers_promoted_entry_removal() -> None:
@@ -235,11 +250,30 @@ def test_memory_type_lists_agree() -> None:
     spec = importlib.util.spec_from_file_location("validate_memory", VALIDATOR_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    # The Codex validator imports only the standard library, so the only
+    # module its load can leave behind is validate_memory itself.
+    tracked = ("validate_memory",)
+    before = set(sys.modules)
+    # Snapshot any pre-existing entry so a registering test elsewhere is
+    # restored, and so the check below covers only names this load added.
+    saved: dict[str, ModuleType] = {n: sys.modules[n] for n in tracked if n in before}
     sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
+        loaded = script_dir_modules(before - {"validate_memory"})
     finally:
-        sys.modules.pop(spec.name, None)
+        # Drop the validator and any script-dir module its load imported,
+        # but never a stdlib module it happened to load.
+        for name in script_dir_modules(before - {"validate_memory"}):
+            del sys.modules[name]
+        sys.modules.pop("validate_memory", None)
+        sys.modules.update(saved)
+    assert set(tracked) - set(saved) <= set(loaded)
+    for name in tracked:
+        if name in saved:
+            assert sys.modules.get(name) is saved[name], f"{name} not restored"
+        else:
+            assert name not in sys.modules, f"{name} leaked"
     types = list(module.MEMORY_TYPES)
     skill = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
     heading = re.search(r"^# Memory$", skill, re.M)
@@ -310,12 +344,29 @@ def test_review_resolves_every_steering_outcome_in_the_destination_check() -> No
 
 def test_review_destination_check_treats_memory_text_as_untrusted() -> None:
     section = review_section()
-    check = section.index("**Destination check**")
-    creation = section.index("**Work-item promotions**")
 
-    assert section.index("untrusted data at every step", check) < creation
-    assert "only after it parses as an issue URL or `owner/repo#N`" in section
-    assert "never interpolated into a command line" in section
+    assert section.index("untrusted data at every step") < section.index("1. **Guard**")
+    assert section.count("untrusted data at every step") == 1
+    assert "`https://github.com/<owner>/<repo>/issues/<N>` URL, `owner/repo#N`" in (
+        section
+    )
+    assert "`owner/repo#N`, `#N` or bare digits; any other value counts as absent" in (
+        section
+    )
+    assert "take the repository from the current checkout, never from the field" in (
+        section
+    )
+    assert "For a parsed `Work item` value, pass `gh` only" in section
+    assert "any other value counts as absent" in section
+    assert "start with an alphanumeric character" in section
+    assert "contain only `[A-Za-z0-9._-]`" in section
+    assert "`issue view N --repo owner/repo` built from the parsed parts" in section
+    assert "never the original field" in section
+    assert "Search with keywords of your own, never copied from the entry" in section
+    assert "never have them interpolated into a command line" in section
+    assert "separate quoted arguments" not in section
+    # The rule is worded once, at the top; step 8 points back to it.
+    assert "never interpolate" not in section
 
 
 def test_review_unsupported_steering_is_never_reclassified_as_remove() -> None:
@@ -325,21 +376,46 @@ def test_review_unsupported_steering_is_never_reclassified_as_remove() -> None:
     assert "is never reclassified as `remove`" in section
 
 
+def test_review_covered_ambiguous_steering_is_not_an_uncovered_target() -> None:
+    section = review_section()
+
+    assert (
+        "An unsupported target, or an ambiguous one that no candidate already "
+        "covers, is an uncovered steering target" in section
+    )
+    assert "unsupported or ambiguous steering candidate" not in section
+    # Combining, the step 9 summary and step 11 each use the one defined term.
+    assert "An uncovered steering target counts as an uncovered destination" in section
+    assert "List uncovered steering targets" in section
+    assert "Retain an entry that has an uncovered steering target" in section
+
+
 def test_review_step_eleven_cites_only_the_steps_review_reuses() -> None:
     section = review_section()
 
     assert "Workflow J steps 3-4 already happened in this review" in section
-    assert "(step 6 replaced its target resolution)" in section
     assert "steps 2-4" not in section
+    destination = re.search(
+        r"(?m)^(\d+)\. \*\*Destination check\*\*",
+        (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8"),
+    )
+    assert destination
+    cited = re.findall(
+        r"this review's step (\d+), the destination check, replaced", section
+    )
+    assert cited == [destination.group(1)]
 
 
 def test_review_destination_check_has_three_sub_bullets() -> None:
     text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
-    start = text.index("6. **Destination check**")
-    block = text[start : text.index("7. **Steering promotions**")]
+    destination = re.search(r"(?m)^\d+\. \*\*Destination check\*\*", text)
+    assert destination
+    following = re.search(r"(?m)^\d+\. ", text[destination.end() :])
+    assert following
+    block = text[destination.start() : destination.end() + following.start()]
 
     for label in ("**Steering.**", "**Work item.**", "**Combining.**"):
-        assert f"    - {label}" in block
+        assert re.search(rf"(?m)^ +- {re.escape(label)}", block), label
 
 
 def test_review_search_match_must_clearly_track_the_entry() -> None:
@@ -349,10 +425,11 @@ def test_review_search_match_must_clearly_track_the_entry() -> None:
     assert "summary names it so the user can judge" in section
 
 
-def test_review_follow_up_covers_unsupported_and_ambiguous_entries() -> None:
+def test_review_follow_up_covers_each_uncovered_steering_target() -> None:
     section = review_section()
 
-    assert "follow-up for each unsupported and each ambiguous entry" in section
+    assert "follow-up for each uncovered steering target" in section
+    assert "each unsupported and each ambiguous entry" not in section
 
 
 def test_review_reads_ambiguous_candidates_before_listing_them() -> None:
