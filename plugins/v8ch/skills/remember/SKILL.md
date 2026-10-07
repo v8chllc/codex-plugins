@@ -1,26 +1,19 @@
 ---
 name: remember
-description: "Load existing project memory, set up memory storage, record structured memories, or capture session notes across four lanes: daily journal, curated memory, local context, and procedural memory. Trigger when: user says 'remember [type] [content]' or 'remember that [content]'; user invokes $remember with or without args; user invokes $remember setup, $remember session, $remember procedure, $remember workflow, $remember standard, or $remember review; user says 'setup remember', 'remember in this project', or 'initialize memory here'. For /recommend commands use the recommend skill."
+description: "Load existing project memory, set up memory storage, record structured memories, or capture session notes across three lanes: daily journal, curated memory, and procedural memory. Trigger when: user says 'remember [type] [content]' or 'remember that [content]'; user invokes $remember with or without args; user invokes $remember setup, $remember session, $remember procedure, $remember workflow, $remember standard, or $remember review; user says 'setup remember', 'remember in this project', or 'initialize memory here'. For /recommend commands use the recommend skill."
 ---
 
 # Remember Skill
 
-Manages five memory lanes for the current working directory:
+Manages four memory lanes for the current working directory:
 
 1. **Daily Journal** — episodic session notes in `.remember/memory/YYYY-MM-DD.md`
 2. **Curated Memory** — durable structured entries in `.remember/MEMORY.md`
-3. **Local Context** — current working state in `.remember/local/context.md`,
-   gitignored so it never reaches another checkout
-4. **Procedural Memory** — behavior-changing guidance in approved agent-facing targets
-5. **Lifecycle Journal** — independently opt-in, immutable `version: 3` Stop
+3. **Procedural Memory** — behavior-changing guidance in approved agent-facing targets
+4. **Lifecycle Journal** — independently opt-in, immutable `version: 3` Stop
    and SessionEnd records in the shared, flat store `.remember/turns/`, used to
    preserve work across `/clear` and terminal session shutdown. Both Claude and
    Codex write into this one store; each record carries its own `platform`.
-
-`.remember/MEMORY.md` travels through Git, so every checkout reads what any
-checkout wrote. Context is state as of a moment on one machine, which makes it
-the one type that must not travel: it lives in `.remember/local/context.md`
-alone.
 
 See `references/types.md` for curated memory type templates and examples.
 See `references/agents-md-directive.md` for the legacy generated directive block
@@ -79,7 +72,6 @@ path to Python. Do not run bundled scripts through repository-relative plugin pa
 - `$remember entity <identifier>`
 - `$remember decision <text>`
 - `$remember error <text>`
-- `$remember context <text>`
 - `$remember preference <text>`
 - `$remember todo <text>`
 
@@ -87,7 +79,6 @@ path to Python. Do not run bundled scripts through repository-relative plugin pa
 - "Remember the entity `<identifier>`"
 - "Remember the decision `<text>`"
 - "Remember the error `<text>`"
-- "Remember the context `<text>`"
 - "Remember the preference `<text>`"
 - "Remember the todo `<text>`"
 - "Remember that `<text>`" — type inferred from content
@@ -105,18 +96,11 @@ Triggered by `$remember` with no args.
      say memory is not initialized and tell the user to run `$remember setup`.
      Do not create files.
 2. Read `.remember/MEMORY.md`.
-3. Read `.remember/local/context.md` when present, and compute its age in days
-   from the `Updated` field against today's date.
-4. Find the most recent dated file matching `.remember/memory/YYYY-MM-DD.md`.
+3. Find the most recent dated file matching `.remember/memory/YYYY-MM-DD.md`.
    Read it regardless of age; do not limit the lookup to today or yesterday.
-5. If no dated journal exists, report that explicitly.
-6. Respond with a concise status report:
+4. If no dated journal exists, report that explicitly.
+5. Respond with a concise status report:
    - durable memory loaded from `.remember/MEMORY.md`
-   - local context loaded from `.remember/local/context.md`, reported as local,
-     non-shared state, with its `Updated` date and age in days; or no local
-     context exists. When the entry is more than 3 days old, say it is
-     possibly stale and should be checked against the working tree before it is
-     relied on.
    - most recent daily journal loaded or absent
    - optional procedural targets present or missing:
      `CODING_STANDARDS.md`, `ARCHITECTURE_STANDARDS.md`,
@@ -130,13 +114,7 @@ Triggered by `$remember setup` or natural language setup phrases.
 
 1. Create `.remember/` in cwd if it is missing.
 2. Create `.remember/memory/` for the journal lane if it is missing.
-3. Create `.remember/local/` for the local context lane if it is missing.
-4. Ensure `.remember/local/` is git-ignored; run
-   `git check-ignore -q .remember/local` to check. If it is not ignored and a
-   `.gitignore` exists, append the rule `.remember/local/`. If no `.gitignore`
-   exists, ask before creating one. An unignored local lane defeats the point of
-   the lane, so do not migrate context into it until the path is ignored.
-5. If `.remember/MEMORY.md` is missing, write this stub:
+3. If `.remember/MEMORY.md` is missing, write this stub:
 
 ```
 # Memory
@@ -144,7 +122,6 @@ Triggered by `$remember setup` or natural language setup phrases.
 <!-- This file is read by Codex at the start of every session.         -->
 <!-- Use $remember to record entries, or edit directly.                  -->
 <!-- Types: entity | decision | error | preference | todo                -->
-<!-- Context is local-only; it lives in .remember/local/context.md.      -->
 
 ## entity
 
@@ -157,25 +134,20 @@ Triggered by `$remember setup` or natural language setup phrases.
 ## todo
 ```
 
-6. If `.remember/MEMORY.md` holds a `<!-- context -->` entry, report it and offer
-   to move it verbatim into `.remember/local/context.md`, then remove the entry
-   and its `## context` heading from `.remember/MEMORY.md`. Move it only after
-   user approval. If `.remember/local/context.md` already holds an entry, show
-   both and ask which to keep; never merge them silently.
-7. If `AGENTS.md` exists, compare its `## Memory` section to
+4. If `AGENTS.md` exists, compare its `## Memory` section to
    `references/agents-md-directive.md`.
    - If the section exactly matches the reference content, remove that generated
      section from `AGENTS.md`.
    - If a `## Memory` section exists but differs from the reference content,
      leave it unchanged and report that manual review is needed.
    - If no `## Memory` section exists, leave `AGENTS.md` unchanged.
-8. Do not create `AGENTS.md` and do not inject a memory-load directive.
-9. Confirm to the user with a summary of files created, existing files reused,
-   directive cleanup performed, context migrated, and any manual review needed.
-10. Run the resolved `scripts/validate_memory.py` with
+5. Do not create `AGENTS.md` and do not inject a memory-load directive.
+6. Confirm to the user with a summary of files created, existing files reused,
+   directive cleanup performed, and any manual review needed.
+7. Run the resolved `scripts/validate_memory.py` with
    `--root . --toolchain codex --check-steering`.
    Report the validation status and issues. Validation must not mutate files.
-11. If `AGENTS.md` is missing a `## Memory Fast-Track Workflow` section, report
+8. If `AGENTS.md` is missing a `## Memory Fast-Track Workflow` section, report
    the gap and ask whether to append generated Codex-appropriate guidance.
    Apply it only after user approval by running the resolved
    `scripts/validate_memory.py` with
@@ -188,9 +160,6 @@ Triggered by `$remember setup` or natural language setup phrases.
 After core memory is confirmed present, inspect and report:
 
 - **Journal lane**: is `.remember/memory/` present? List today's journal file if it exists.
-- **Local context lane**: is `.remember/local/` present and git-ignored? Does
-  `.remember/local/context.md` exist? Report whether a context migration was
-  performed, offered and declined, or not needed.
 - **Procedural targets**: for each of `CODING_STANDARDS.md`, `ARCHITECTURE_STANDARDS.md`, `WORKFLOW_STANDARDS.md` — present or missing? Report as optional managed targets. Do not create them automatically; offer stubs only on request.
 - **Validation**: summarize pass/fail counts and actionable issues from
   `scripts/validate_memory.py`.
@@ -209,21 +178,14 @@ Triggered by `$remember <type> <content>` or natural language equivalent.
 3. **Gather content**:
    - `entity`: search the codebase for `<identifier>` (grep/glob for class, function, or file). Fill template fields from what is found. Confirm with user before writing.
    - `decision`: use provided text. If no date is given, use today's date. Ask for `Rationale` if not supplied.
-   - `error`, `context`, `preference`: use provided text. Fill template fields. Ask for missing required fields if content is too sparse.
+   - `error`, `preference`: use provided text. Fill template fields. Ask for missing required fields if content is too sparse.
    - `todo`: use provided text. If no date is given, use today's date. Ask for `Next action` if not supplied. Set `Status: open` by default.
-4. **Route by target**: `context` is written to `.remember/local/context.md` and
-   never to `.remember/MEMORY.md`. Every other type is written to
-   `.remember/MEMORY.md`.
-5. **Duplicate check**: for `context`, replace whatever
-   `.remember/local/context.md` already holds — that file carries at most one
-   entry. For every other type, search `.remember/MEMORY.md` for an existing
-   entry with the same name or subject; if found, offer to update in place
-   rather than append.
-6. Write the entry using the template from `references/types.md`. In
-   `.remember/MEMORY.md`, append or update under the correct `## <type>`
-   section. For `context`, write `.remember/local/context.md` whole, first
-   creating `.remember/local/` and its ignore rule if setup has not.
-7. Confirm to user: type recorded, subject, target file, and whether it was added or updated.
+4. **Duplicate check**: search `.remember/MEMORY.md` for an existing entry with
+   the same name or subject; if found, offer to update in place rather than
+   append.
+5. Write the entry using the template from `references/types.md`, appending or
+   updating under the correct `## <type>` section of `.remember/MEMORY.md`.
+6. Confirm to user: type recorded, subject, target file, and whether it was added or updated.
 
 ---
 
@@ -231,7 +193,7 @@ Triggered by `$remember <type> <content>` or natural language equivalent.
 
 Triggered by "Remember that `<text>`" with no explicit type keyword.
 
-1. Read `<text>` and classify as one of: `entity`, `decision`, `error`, `context`, `preference`, `todo`.
+1. Read `<text>` and classify as one of: `entity`, `decision`, `error`, `preference`, `todo`.
 2. Tell the user: "I'll record this as a `<type>`. Does that look right?"
 3. On confirmation: continue as Workflow C from step 3.
 4. On rejection: ask the user to specify the type, then continue as Workflow C from step 3.
@@ -350,11 +312,10 @@ Invoked by the `recommend` skill (`/recommend curated`).
 3. Identify durable curated candidates:
    - `decision`: explicit technical or workflow choices and their rationale.
    - `error`: failure modes, fixes, gotchas, or validation issues discovered.
-   - `context`: current project state, active work, blockers, or next steps. Written to `.remember/local/context.md`, never to `.remember/MEMORY.md`.
    - `preference`: repeated or explicit user working preferences.
    - `entity`: important codebase objects discussed in enough detail to locate and describe.
 4. Exclude ephemeral information: one-off commands, transient status, vague observations, unconfirmed guesses, or facts already covered.
-5. Compare candidates against `.remember/MEMORY.md`, and any `context` candidate against `.remember/local/context.md`. Mark each as `add`, `update`, or `skip`. Prefer updating the existing local `context` entry over adding a second one.
+5. Compare candidates against `.remember/MEMORY.md`. Mark each as `add`, `update`, or `skip`.
 6. Present recommendations only; do not write automatically.
 7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `references/types.md`.
 8. Ask which to apply. On approval, continue through Workflow C from duplicate check.
@@ -374,7 +335,7 @@ Invoked by the `recommend` skill (`/recommend session`).
    either is missing, tell the user to run `$remember setup` first.
 2. Run journal write logic (Workflow E steps 2–6) as a prerequisite. If already captured (dedupe), skip silently and continue.
 3. Review the captured journal entry and full session context.
-4. Identify curated candidates (entity, decision, error, context, preference) and procedural candidates (workflow lessons, coding/arch standards, skill/tool routines).
+4. Identify curated candidates (entity, decision, error, preference) and procedural candidates (workflow lessons, coding/arch standards, skill/tool routines).
 5. Resolve each procedural candidate to an approved target from `references/procedural-targets.md`. If no target fits, mark as unsupported.
 6. Dedupe curated candidates against `.remember/MEMORY.md`; dedupe procedural candidates against their respective target files.
 7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
@@ -431,21 +392,67 @@ Triggered by `$remember review`, "review memory", "audit memories", or "clean up
 
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first.
-2. Read `.remember/MEMORY.md` and collect all entries across every type section, then read `.remember/local/context.md` when present.
-3. For each entry, classify as one of:
-   - `retain`: still accurate and useful.
-   - `remove`: stale, duplicated, obsolete, superseded, or no longer actionable.
-   - `act`: requires follow-up.
+2. Read `.remember/MEMORY.md` and collect all entries across every type section.
+3. Classify each entry with one of four outcomes:
+   - `retain`: still accurate and useful as memory.
+   - `remove`: stale, duplicated, obsolete, superseded, complete, or already
+     covered by its destination.
+   - `promote → work item`: actionable follow-up that belongs in the tracker.
+   - `promote → steering`: durable guidance that belongs in an approved steering
+     target.
+
+   Every entry type is eligible for whichever promotion destination fits. An
+   entry that fits both destinations may be proposed for both promotions.
 4. Apply type-specific review criteria:
-   - `entity`: retain if the code object still exists and remains important; remove if deleted, renamed without update, duplicated, or too trivial; act if documentation or dependencies need updating.
-   - `decision`: retain if the rationale is still valid; remove if superseded or contradicted by a newer decision; act if implementation or documentation appears incomplete.
-   - `error`: retain if the failure mode may recur; remove if obsolete (resolved and unlikely to recur); act if status is `watch` and there is an unresolved mitigation.
-   - `context`: read from `.remember/local/context.md`. Retain only if it still matches the working tree; remove or update if stale. The file holds at most one entry; collapse any extras. A `<!-- context -->` entry still sitting in `.remember/MEMORY.md` is a migration item, not a review item — move it.
-   - `preference`: retain unless contradicted by a newer preference; remove duplicates or overly narrow one-off preferences.
-   - `todo`: retain if still valid; remove if `done`, `obsolete`, or duplicated; act if `open` or `blocked` and specific enough to become a work item.
-5. For `todo` entries classified as `act`, propose new work items (title, description, suggested tracking mechanism). Do not create automatically.
-6. Respond with a concise summary: total entries reviewed, counts per classification, memories to remove, memories to act upon, proposed work items.
-7. Ask which removals and actions to apply. On approval: remove entries, create work items if requested, update `todo` entries with the `Work item` field.
+   - `entity`: retain if the code object still exists and remains important;
+     remove if deleted, renamed without update, duplicated, or too trivial;
+     promote → steering when it describes structure every agent should know;
+     promote → work item when its documentation or dependencies need follow-up.
+   - `decision`: retain if the rationale is still valid; remove if superseded or
+     contradicted by a newer decision; promote → steering when it is a standing
+     rule; promote → work item when implementation or documentation appears
+     incomplete.
+   - `error`: retain if the failure mode may recur; remove if obsolete (resolved
+     and unlikely to recur); promote → work item when status is `watch` and a
+     mitigation is unresolved; promote → steering when the fix is a gotcha every
+     agent should follow.
+   - `preference`: retain unless contradicted by a newer preference; remove
+     duplicates or overly narrow one-off preferences; promote → steering when it
+     governs how work is done in this repository.
+   - `todo`: remove if complete, obsolete (including a legacy `done` or
+     `obsolete` status), or duplicated; promote → work item when `open` or
+     `blocked` and specific enough to execute; otherwise retain.
+5. **Destination check**: before proposing any promotion, check its
+   destination. For `promote → steering`, resolve the target as Workflow J does
+   and read it. For `promote → work item`, look for an existing work item that
+   already tracks the entry, such as a filled `Work item` field or a matching
+   open issue. If an approved steering target already covers the entry, or an
+   existing work item already tracks it, reclassify the entry as `remove` and
+   name the destination that covers it.
+6. **Steering promotions** go through Workflow J: approved targets from
+   `references/procedural-targets.md` only, fail closed, and a patch shown for
+   approval. When no approved target fits, report the entry as unsupported and
+   retain it; never write it elsewhere.
+7. **Work-item promotions** follow the tracking rules in the repository's
+   steering (such as `CLAUDE.md`, `AGENTS.md`, or a workflow standard): where the
+   work item lives, how it is labelled, and whether it needs a parent. With no
+   tracking rules, propose an issue in the current repository (for example with
+   `gh issue create`). When the rules require a parent that does not exist,
+   propose the parent too. Propose each work item's title and description; do
+   not create anything automatically.
+8. Respond with a concise summary grouped by outcome (`retain`, `remove`,
+   `promote → work item`, `promote → steering`) with counts per outcome. Group
+   promotions by destination: work items first, then each steering file with
+   its proposed patch. List unsupported steering candidates separately.
+9. Ask for per-item approval. Nothing is removed, written, or created without
+   per-item approval: each removal, each work item, and each steering patch is
+   approved on its own.
+10. Apply only approved items. Create approved work items, and apply approved
+    steering patches through Workflow J. Remove a promoted entry from
+    `.remember/MEMORY.md` only after every approved destination for it has
+    landed, decisions included, and leave no pointer: no `Work item` back-link,
+    no stub. A declined or failed promotion leaves the entry unchanged. Remove
+    approved `remove` entries.
 
 ---
 
@@ -458,26 +465,21 @@ remember", or "validate memory".
    - Human-readable arguments: `--root . --toolchain codex --check-steering`
    - JSON arguments: `--root . --toolchain codex --check-steering --json`
 2. Validation checks `.remember/MEMORY.md` for required type sections, known
-   entry markers, and required fields. A `<!-- context -->` entry there is an
-   error (`context_entry_in_memory_file`); a leftover `## context` heading is a
-   warning (`legacy_context_section`).
-3. Validation checks `.remember/local/context.md` for a single well-formed
-   `context` entry, and reports `local_context_not_ignored` when
-   `.remember/local/` exists in a Git repository without being ignored.
-4. Validation checks `.remember/memory/YYYY-MM-DD.md` journal filenames and
+   entry markers, and required fields. Any entry marker outside the five types
+   in `references/types.md` is an error (`unknown_memory_marker`).
+3. Validation checks `.remember/memory/YYYY-MM-DD.md` journal filenames and
    `remember-journal` metadata blocks, plus `version: 3` lifecycle segment
    records in `.remember/turns/`.
-5. With `--check-steering`, validation also inspects an existing
+4. With `--check-steering`, validation also inspects an existing
    `## Memory Fast-Track Workflow` section and reports
-   `fast_track_steering_drift` when the allowlist has lost a required path or
-   the conflict step still references a single active `context` entry. It never
-   rewrites an existing section.
-6. Validation reports issues without mutating files by default. Only append
+   `fast_track_steering_drift` when the allowlist has lost a required path. It
+   never rewrites an existing section.
+5. Validation reports issues without mutating files by default. Only append
    generated Memory Fast-Track steering after explicit user approval with
    `--apply-fast-track`.
-7. JSON output includes overall `status`, `counts`, and `issues` containing
+6. JSON output includes overall `status`, `counts`, and `issues` containing
    `severity`, `code`, `path`, `message`, and optional `suggested_fix`.
-8. Respond with the helper output and a concise next action for any failures.
+7. Respond with the helper output and a concise next action for any failures.
 
 ---
 
