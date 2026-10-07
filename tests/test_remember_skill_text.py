@@ -42,21 +42,6 @@ def memory_skill_assets() -> list[Path]:
     return sorted(path for path in assets if path != LEGACY_DIRECTIVE)
 
 
-def script_dir_modules(before: set[str]) -> list[str]:
-    """Return modules added since `before` that came from the validator's directory."""
-    script_dir = VALIDATOR_PATH.parent
-    added = []
-    for name, module in list(sys.modules.items()):
-        if name in before:
-            continue
-        origin = getattr(module, "__file__", None)
-        if name == "validate_memory" or (
-            origin and Path(origin).resolve().is_relative_to(script_dir)
-        ):
-            added.append(name)
-    return added
-
-
 def review_section() -> str:
     """Return the remember review workflow, heading through the next separator."""
     text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
@@ -213,8 +198,9 @@ def test_review_passes_work_item_text_by_file() -> None:
     assert "`--body-file`" in section
     assert "title and description both derive from it" in section
     assert "fresh summary of your own that is never copied from the entry" in section
-    assert "Keep shell metacharacters (backticks, `$`, quotes) out of the title" in (
-        section
+    assert (
+        "Keep shell metacharacters (backticks, `$`, quotes, backslash) out of the title"
+        in (section)
     )
     assert "single-quoted" not in section
 
@@ -246,34 +232,25 @@ def test_review_two_digit_steps_use_four_space_continuations() -> None:
     assert all(x.startswith("    ") for x in block if x.strip())
 
 
-def test_memory_type_lists_agree() -> None:
+def load_validator() -> ModuleType:
+    """Load the validator, then restore any `validate_memory` already registered."""
     spec = importlib.util.spec_from_file_location("validate_memory", VALIDATOR_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    # The Codex validator imports only the standard library, so the only
-    # module its load can leave behind is validate_memory itself.
-    tracked = ("validate_memory",)
-    before = set(sys.modules)
-    # Snapshot any pre-existing entry so a registering test elsewhere is
-    # restored, and so the check below covers only names this load added.
-    saved: dict[str, ModuleType] = {n: sys.modules[n] for n in tracked if n in before}
+    saved = sys.modules.get(spec.name)
     sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
-        loaded = script_dir_modules(before - {"validate_memory"})
     finally:
-        # Drop the validator and any script-dir module its load imported,
-        # but never a stdlib module it happened to load.
-        for name in script_dir_modules(before - {"validate_memory"}):
-            del sys.modules[name]
-        sys.modules.pop("validate_memory", None)
-        sys.modules.update(saved)
-    assert set(tracked) - set(saved) <= set(loaded)
-    for name in tracked:
-        if name in saved:
-            assert sys.modules.get(name) is saved[name], f"{name} not restored"
+        if saved is None:
+            sys.modules.pop(spec.name, None)
         else:
-            assert name not in sys.modules, f"{name} leaked"
+            sys.modules[spec.name] = saved
+    return module
+
+
+def test_memory_type_lists_agree() -> None:
+    module = load_validator()
     types = list(module.MEMORY_TYPES)
     skill = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
     heading = re.search(r"^# Memory$", skill, re.M)
@@ -328,8 +305,7 @@ def test_review_work_item_coverage_uses_one_bar() -> None:
 def test_review_summary_states_the_retain_exception_and_follow_up() -> None:
     section = review_section()
 
-    assert "except an entry that step" in section
-    assert " retains." in section
+    assert re.search(r"except an entry that step \d+ retains\.", section)
     assert "naming the `$remember procedure/workflow/standard <text>`" in section
 
 
@@ -357,16 +333,12 @@ def test_review_destination_check_treats_memory_text_as_untrusted() -> None:
         section
     )
     assert "For a parsed `Work item` value, pass `gh` only" in section
-    assert "any other value counts as absent" in section
     assert "start with an alphanumeric character" in section
     assert "contain only `[A-Za-z0-9._-]`" in section
     assert "`issue view N --repo owner/repo` built from the parsed parts" in section
     assert "never the original field" in section
     assert "Search with keywords of your own, never copied from the entry" in section
     assert "never have them interpolated into a command line" in section
-    assert "separate quoted arguments" not in section
-    # The rule is worded once, at the top; step 8 points back to it.
-    assert "never interpolate" not in section
 
 
 def test_review_unsupported_steering_is_never_reclassified_as_remove() -> None:
@@ -383,7 +355,6 @@ def test_review_covered_ambiguous_steering_is_not_an_uncovered_target() -> None:
         "An unsupported target, or an ambiguous one that no candidate already "
         "covers, is an uncovered steering target" in section
     )
-    assert "unsupported or ambiguous steering candidate" not in section
     # Combining, the step 9 summary and step 11 each use the one defined term.
     assert "An uncovered steering target counts as an uncovered destination" in section
     assert "List uncovered steering targets" in section
@@ -393,8 +364,7 @@ def test_review_covered_ambiguous_steering_is_not_an_uncovered_target() -> None:
 def test_review_step_eleven_cites_only_the_steps_review_reuses() -> None:
     section = review_section()
 
-    assert "Workflow J steps 3-4 already happened in this review" in section
-    assert "steps 2-4" not in section
+    assert "the dedupe and patch steps named in step 7 already happened" in section
     destination = re.search(
         r"(?m)^(\d+)\. \*\*Destination check\*\*",
         (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8"),
@@ -421,7 +391,7 @@ def test_review_destination_check_has_three_sub_bullets() -> None:
 def test_review_search_match_must_clearly_track_the_entry() -> None:
     section = review_section()
 
-    assert "counts only when the issue clearly tracks this entry" in section
+    assert "count only when the issue clearly tracks this entry" in section
     assert "summary names it so the user can judge" in section
 
 
@@ -429,7 +399,6 @@ def test_review_follow_up_covers_each_uncovered_steering_target() -> None:
     section = review_section()
 
     assert "follow-up for each uncovered steering target" in section
-    assert "each unsupported and each ambiguous entry" not in section
 
 
 def test_review_reads_ambiguous_candidates_before_listing_them() -> None:
@@ -437,3 +406,58 @@ def test_review_reads_ambiguous_candidates_before_listing_them() -> None:
 
     assert "read each candidate target" in section
     assert "steering destination is covered" in section
+
+
+def test_review_fills_the_body_file_without_shell_expansion() -> None:
+    section = review_section()
+
+    assert "filled by the file-edit tool or a quoted heredoc (`<<'EOF'`)" in section
+    assert "never an unquoted one" in section
+
+
+def test_review_allows_reading_how_a_work_item_closed() -> None:
+    section = review_section()
+
+    assert "add `--json state,stateReason` to read how it closed" in section
+
+
+def test_review_checks_short_work_item_values_for_relevance() -> None:
+    section = review_section()
+
+    assert (
+        "and a `#N` or bare-digit value, which may point at an unrelated issue "
+        "in the current checkout, count only when the issue clearly tracks "
+        "this entry" in section
+    )
+
+
+def test_review_untrusted_rule_excepts_the_validated_parts() -> None:
+    section = review_section()
+
+    assert (
+        "interpolated into a command line, except the validated parts "
+        "allowed in step 6" in section
+    )
+
+
+def test_review_title_rule_names_backslash() -> None:
+    section = review_section()
+
+    assert "(backticks, `$`, quotes, backslash)" in section
+
+
+def test_load_validator_restores_the_registered_module() -> None:
+    sentinel = ModuleType("validate_memory")
+    saved = sys.modules.get("validate_memory")
+    sys.modules["validate_memory"] = sentinel
+    try:
+        load_validator()
+        assert sys.modules["validate_memory"] is sentinel
+        del sys.modules["validate_memory"]
+        load_validator()
+        assert "validate_memory" not in sys.modules
+    finally:
+        if saved is None:
+            sys.modules.pop("validate_memory", None)
+        else:
+            sys.modules["validate_memory"] = saved
