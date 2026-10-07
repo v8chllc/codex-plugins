@@ -226,7 +226,7 @@ Status:
 
 
 def test_validator_source_has_no_legacy_type() -> None:
-    """The validator carries no constant, function, field, or code for the type."""
+    """The validator carries no `"context"` literal and none of the retired names."""
     source = SCRIPT.read_text(encoding="utf-8")
     assert f'"{LEGACY_TYPE}"' not in source
     for name in RETIRED_NAMES:

@@ -62,6 +62,14 @@ def review_step_number(label: str) -> str:
     return found.group(1)
 
 
+def review_step_block(number: str) -> str:
+    """Return the text of review step `number`, asserting that it exists."""
+    steps = re.split(r"(?m)^(?=\d+\. )", workflow_block(REVIEW_HEADING))
+    block = next((x for x in steps if x.startswith(f"{number}. ")), None)
+    assert block is not None, f"Workflow K has no step {number}"
+    return block
+
+
 def test_todo_status_is_open_or_blocked_only() -> None:
     text = TYPES_PATH.read_text(encoding="utf-8")
 
@@ -150,9 +158,10 @@ def test_review_summary_reference_names_the_summary_step() -> None:
     section = review_section()
     summary = re.search(r"(?:^| )(\d+)\. Respond with a concise summary", section)
     assert summary
-    refs = re.findall(r"the step (\d+) summary", section)
+    refs = re.findall(r"reported in step (\d+)", section)
 
-    assert refs
+    # Step 6 points at the summary from the steering and the work item bullets.
+    assert len(refs) == 2
     assert set(refs) == {summary.group(1)}
 
 
@@ -162,7 +171,7 @@ def test_review_destination_check_is_per_destination() -> None:
     assert "Check each destination separately" in section
     assert "only when every destination that fits it is already covered" in section
     assert "counts as absent" in section
-    assert "list the entry with its candidate targets" in section
+    assert "List the entry with its candidate targets" in section
 
 
 def test_review_retains_entries_with_unsupported_steering_candidates() -> None:
@@ -397,10 +406,7 @@ def test_review_step_eleven_cites_only_the_steps_review_reuses() -> None:
 
 
 def test_review_destination_check_has_three_sub_bullets() -> None:
-    review = workflow_block(REVIEW_HEADING)
-    number = review_step_number("Destination check")
-    steps = re.split(r"(?m)^(?=\d+\. )", review)
-    block = next(x for x in steps if x.startswith(f"{number}. "))
+    block = review_step_block(review_step_number("Destination check"))
 
     for label in ("**Steering.**", "**Work item.**", "**Combining.**"):
         assert re.search(rf"(?m)^ +- {re.escape(label)}", block), label
@@ -410,7 +416,7 @@ def test_review_search_match_must_clearly_track_the_entry() -> None:
     section = review_section()
 
     assert "count only when the issue clearly tracks this entry" in section
-    assert "summary names it so the user can judge" in section
+    assert "naming the issue so the user can judge" in section
 
 
 def test_review_follow_up_covers_each_uncovered_steering_target() -> None:
@@ -438,6 +444,16 @@ def test_review_fills_the_body_file_without_shell_expansion() -> None:
         section
     )
     assert "never an unquoted one" in section
+
+
+def test_review_keeps_work_item_files_out_of_the_tree_and_shell() -> None:
+    section = review_section()
+
+    assert "write any title file by the same file-edit tool or quoted heredoc" in (
+        section
+    )
+    assert "files outside the repository (for example under `mktemp -d`)" in section
+    assert "whether or not `gh issue create` succeeds" in section
 
 
 def test_review_allows_reading_how_a_work_item_closed() -> None:
@@ -469,3 +485,68 @@ def test_review_untrusted_rule_excepts_the_validated_parts() -> None:
         r"allowed in step (\d+)",
         section,
     ) == [review_step_number("Destination check")]
+
+
+def work_item_bullet() -> str:
+    section = review_section()
+    start = section.index("**Work item.**")
+    return section[start : section.index("**Combining.**", start)]
+
+
+def test_review_work_item_bullet_is_split_into_parse_look_up_covered() -> None:
+    review = workflow_block(REVIEW_HEADING)
+    for label in ("**Parse.**", "**Look up.**", "**Covered.**"):
+        assert re.search(rf"(?m)^ {{5}}- {re.escape(label)}", review), label
+    bullet = work_item_bullet()
+
+    # The repository for a `#N` value is fixed in Parse, before any lookup.
+    assert bullet.index("**Parse.**") < bullet.index("from the current checkout")
+    assert bullet.index("from the current checkout") < bullet.index("**Look up.**")
+    assert bullet.index("**Look up.**") < bullet.index("**Covered.**")
+    assert bullet.index("issue view N --repo owner/repo") > bullet.index("**Look up.**")
+
+
+def test_review_names_the_repository_a_short_reference_resolves_against() -> None:
+    bullet = work_item_bullet()
+
+    assert "`gh repo view --json nameWithOwner` reports" in bullet
+    assert "for `#N` or bare digits, the checkout repository from Parse" in bullet
+
+
+def test_review_reports_legacy_closed_items_and_json_errors() -> None:
+    bullet = work_item_bullet()
+
+    assert "Any `gh` failure (a lookup, a search, or `gh repo view`)" in bullet
+    assert "counts as not resolving" in bullet
+    assert "`stateReason` is empty or unknown" in bullet
+
+
+def test_review_step_nine_lists_the_step_six_report_items() -> None:
+    review = workflow_block(REVIEW_HEADING)
+    found = re.search(r"(?m)^(\d+)\. Respond with a concise summary", review)
+    assert found, "Workflow K has no summary step"
+    block = review_step_block(found.group(1))
+    nine = normalized(block)
+
+    # One labelled part per report item, so no clause carries several jobs.
+    labels = re.findall(r"(?m)^   - (\*\*[\w -]+\.\*\*)", block)
+    assert labels == [
+        "**Outcomes.**",
+        "**Steering follow-ups.**",
+        "**Destination-check reports.**",
+        "**Removal.**",
+    ]
+    assert re.findall(r"Also report from step (\d+): each `gh` failure", nine) == [
+        review_step_number("Destination check")
+    ]
+    assert "each counted search match; and each counted `#N` or bare-digit" in nine
+    assert "with its candidate targets when the target was ambiguous" in nine
+    assert "empty or unknown `stateReason`" in nine
+    assert "the original value beside it" in nine
+
+
+def test_review_work_item_promotions_step_is_split_into_three_parts() -> None:
+    block = review_step_block(review_step_number("Work-item promotions"))
+
+    labels = re.findall(r"(?m)^   - (\*\*\w+\.\*\*)", block)
+    assert labels == ["**Destination.**", "**Proposal.**", "**Creating.**"]
