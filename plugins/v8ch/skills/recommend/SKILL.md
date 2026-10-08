@@ -43,6 +43,10 @@ Triggered by `/recommend curated`.
    - `entity`: important codebase objects discussed in enough detail to locate and describe.
 4. Exclude ephemeral information: one-off commands, transient status, vague observations, unconfirmed guesses, or facts already covered.
 5. Compare candidates against `.remember/MEMORY.md`. Mark each as `add`, `update`, or `skip`.
+   For decision and error adds or updates, include optional `Evidence` only
+   when available checkable provenance supports the claim. Never invent it;
+   missing evidence does not block the recommendation. Keep existing evidence
+   on an update only while it supports the revised claim.
 6. Present recommendations only; do not write automatically.
 7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `../remember/references/types.md`.
 8. Ask which to apply.
@@ -69,6 +73,10 @@ Triggered by `/recommend session`.
 4. Identify curated candidates (entity, decision, error, preference; todos are recorded with `$remember todo`, not recommended) and procedural candidates (workflow lessons, coding/arch standards, skill/tool routines).
 5. Resolve each procedural candidate to an approved target from `../remember/references/procedural-targets.md`. If no target fits, mark as unsupported.
 6. Dedupe curated candidates against `.remember/MEMORY.md`; dedupe procedural candidates against their respective target files.
+   For decision and error adds or updates, include optional `Evidence` only
+   when available checkable provenance supports the claim. Never invent it;
+   missing evidence does not block the recommendation. Keep existing evidence
+   on an update only while it supports the revised claim.
 7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
 8. Before applying approved changes, run the resolved validator with
    `--root . --toolchain codex`.

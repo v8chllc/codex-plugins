@@ -130,6 +130,55 @@ def test_valid_memory_json_output_passes(tmp_path: Path) -> None:
     assert payload["issues"] == []
 
 
+def test_legacy_decision_and_error_without_evidence_remain_valid(
+    tmp_path: Path,
+) -> None:
+    write_valid_memory(tmp_path)
+
+    result = run_validate(tmp_path, "--json")
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["issues"] == []
+
+
+def test_decision_and_error_evidence_urls_keep_colons(tmp_path: Path) -> None:
+    write_valid_memory(tmp_path)
+    memory_path = tmp_path / ".remember" / "MEMORY.md"
+    decision_url = "https://github.com/example/service/issues/42"
+    error_url = "https://github.com/example/service/pull/43#discussion_r123"
+    source = memory_path.read_text(encoding="utf-8")
+    source = source.replace(
+        "Rationale: Validation should not require network access",
+        "Rationale: Validation should not require network access\n"
+        f"Evidence: {decision_url}",
+    ).replace(
+        "Status: watch",
+        f"Status: watch\nEvidence: {error_url}",
+    )
+    memory_path.write_text(source, encoding="utf-8")
+
+    result = run_validate(tmp_path, "--json")
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["issues"] == []
+    # Import the unchanged validator to exercise its actual parser, including
+    # the colon after https, instead of duplicating its parsing rule here.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("remember_validator", SCRIPT)
+    assert spec and spec.loader
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    entries = validator.memory_entries(source)
+    values = {
+        kind: validator.parse_fields(block)["Evidence"]
+        for kind, block in entries
+        if kind in {"decision", "error"}
+    }
+    assert values == {"decision": decision_url, "error": error_url}
+
+
 def test_missing_required_field_is_reported(tmp_path: Path) -> None:
     write_valid_memory(tmp_path)
     memory_path = tmp_path / ".remember" / "MEMORY.md"

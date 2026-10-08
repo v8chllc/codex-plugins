@@ -54,6 +54,62 @@ def review_section() -> str:
     return normalized(workflow_block(REVIEW_HEADING))
 
 
+def type_block(kind: str) -> str:
+    text = TYPES_PATH.read_text(encoding="utf-8")
+    return text.split(f"## {kind}\n", 1)[1].split("\n---\n", 1)[0]
+
+
+@pytest.mark.parametrize("kind", ["decision", "error"])
+def test_evidence_template_example_and_source_guidance(kind: str) -> None:
+    section = normalized(type_block(kind))
+    assert section.count("Evidence:") == 2
+    assert "<optional checkable source" in section
+    assert "Omit it when" in section
+    assert "recorded command result" in section
+    assert "An unrun command or inferred source is not evidence" in section
+
+
+@pytest.mark.parametrize("kind", ["entity", "preference", "todo"])
+def test_other_memory_types_have_no_evidence_field(kind: str) -> None:
+    assert "Evidence:" not in type_block(kind)
+
+
+def test_typed_recording_handles_optional_and_updated_evidence() -> None:
+    section = normalized(workflow_block("## Workflow C: Record (typed)"))
+    assert "available checkable source" in section
+    assert "never invent a source" in section
+    assert "Missing evidence does not block" in section
+    assert "keep existing `Evidence` only while it supports" in section
+
+
+@pytest.mark.parametrize(
+    ("heading", "skill"),
+    [
+        ("## Workflow G: Recommend Curated", "remember"),
+        ("## Workflow H: Recommend Session", "remember"),
+        ("## Workflow E: Recommend Curated", "recommend"),
+        ("## Workflow F: Recommend Session", "recommend"),
+    ],
+)
+def test_recommendation_paths_ground_optional_evidence(
+    heading: str, skill: str
+) -> None:
+    text = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+    section = normalized(text.split(heading, 1)[1].split("\n---\n", 1)[0])
+    assert "decision and error adds or updates" in section
+    assert "checkable provenance" in section
+    assert "Never invent it" in section or "never invent it" in section
+    assert "only if it supports" in section or "only while it supports" in section
+
+
+def test_review_uses_evidence_for_retention_and_promotions() -> None:
+    section = review_section()
+    assert "use available `Evidence` to check" in section
+    assert "Missing evidence does not itself require removal" in section
+    assert "decision or error entry into the proposed patch" in section
+    assert "decision or error entry in the description" in section
+
+
 def review_step_number(label: str) -> str:
     """Return the number of the review step whose bold label is `label`."""
     block = workflow_block(REVIEW_HEADING)
