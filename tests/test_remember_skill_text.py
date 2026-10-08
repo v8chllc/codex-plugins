@@ -65,8 +65,18 @@ def test_evidence_template_example_and_source_guidance(kind: str) -> None:
     assert section.count("Evidence:") == 2
     assert "<optional checkable source" in section
     assert "Omit it when" in section
-    assert "recorded command result" in section
+    for source in (
+        "issue",
+        "pull request",
+        "commit",
+        "file reference",
+        "recorded command result",
+    ):
+        assert source in section
     assert "An unrun command or inferred source is not evidence" in section
+    if kind == "error":
+        assert "failed run https://" in section
+        assert "successful rerun https://" in section
 
 
 @pytest.mark.parametrize("kind", ["entity", "preference", "todo"])
@@ -106,8 +116,12 @@ def test_review_uses_evidence_for_retention_and_promotions() -> None:
     section = review_section()
     assert "use available `Evidence` to check" in section
     assert "Missing evidence does not itself require removal" in section
+    assert "source that no longer supports the claim as stale" in section
+    assert "assess the claim using other available facts" in section
     assert "decision or error entry into the proposed patch" in section
+    assert "without treating stale or unsupported evidence as proof" in section
     assert "decision or error entry in the description" in section
+    assert "do not present unsupported evidence as proof" in section
 
 
 def review_step_number(label: str) -> str:
