@@ -86,7 +86,7 @@ Symptom: uv run fails with "no project found" in CI
 Root cause: pyproject.toml not in the working directory at job start
 Fix: Add `working-directory: ./backend` to the CI job step
 Status: resolved
-Evidence: ci/jobs/backend.yml (failed run and successful rerun)
+Evidence: failed run https://github.com/example/service/actions/runs/123; successful rerun https://github.com/example/service/actions/runs/124
 ```
 
 Use `Evidence` when a source supports the observed failure or fix: an issue or
