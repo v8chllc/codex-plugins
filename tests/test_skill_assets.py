@@ -211,13 +211,23 @@ def test_fix_workflow_maps_every_fixer_result_to_a_workflow_outcome() -> None:
     )
     handback = normalized(markdown_section(workflow, "### 6. Hand back"))
     for mapping in (
-        "`COMPLETE` | changes committed and pushed | `COMPLETE`",
-        "`COMPLETE` | no files changed | `NO_CHANGE`",
+        "`COMPLETE` | `partial`; changes committed and pushed | `BLOCKERS_REMAIN`",
+        "`COMPLETE` | `partial`; no files changed | `BLOCKERS_REMAIN`",
+        "`COMPLETE` | `work-item-required`; changes committed and pushed | "
+        "`BLOCKERS_REMAIN`",
+        "`COMPLETE` | `work-item-required`; no files changed | `BLOCKERS_REMAIN`",
+        "`COMPLETE` | no unresolved dispositions; changes committed and pushed | "
+        "`COMPLETE`",
+        "`COMPLETE` | no unresolved dispositions; no files changed | `NO_CHANGE`",
         "`MUTATION_UNPROVEN` | any | `BLOCKERS_REMAIN`",
         "`QUALITY_FAILURES` | any | `QUALITY_FAILURES`",
         "`COMPLETE` | a finding has no disposition | `BLOCKERS_REMAIN`",
     ):
         assert mapping in handback
+    assert (
+        "Apply the `partial`, `work-item-required`, and missing-disposition rows "
+        "before evaluating whether changes were committed or no files changed"
+    ) in handback
     assert (
         "Return `fixer_result` using only `COMPLETE`, `MUTATION_UNPROVEN`, or "
         "`QUALITY_FAILURES`"

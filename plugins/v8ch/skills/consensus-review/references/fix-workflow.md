@@ -105,11 +105,18 @@ Keep two result fields with distinct, exhaustive vocabularies:
 
 | Fixer result | Workflow condition | Workflow outcome |
 | --- | --- | --- |
-| `COMPLETE` | changes committed and pushed | `COMPLETE` |
-| `COMPLETE` | no files changed | `NO_CHANGE` |
 | `MUTATION_UNPROVEN` | any | `BLOCKERS_REMAIN` |
 | `QUALITY_FAILURES` | any | `QUALITY_FAILURES` |
 | `COMPLETE` | a finding has no disposition | `BLOCKERS_REMAIN` |
+| `COMPLETE` | `partial`; changes committed and pushed | `BLOCKERS_REMAIN` |
+| `COMPLETE` | `partial`; no files changed | `BLOCKERS_REMAIN` |
+| `COMPLETE` | `work-item-required`; changes committed and pushed | `BLOCKERS_REMAIN` |
+| `COMPLETE` | `work-item-required`; no files changed | `BLOCKERS_REMAIN` |
+| `COMPLETE` | no unresolved dispositions; changes committed and pushed | `COMPLETE` |
+| `COMPLETE` | no unresolved dispositions; no files changed | `NO_CHANGE` |
+
+Apply the `partial`, `work-item-required`, and missing-disposition rows before
+evaluating whether changes were committed or no files changed.
 
 Return `fixer_result` using only `COMPLETE`, `MUTATION_UNPROVEN`, or
 `QUALITY_FAILURES`. Return `workflow_outcome` using only `COMPLETE`,
@@ -130,7 +137,7 @@ identical runs cannot end on different signals:
 2. Workflow outcome `QUALITY_FAILURES` — `QUALITY_FAILURES`.
 3. Budget remaining — start the next review cycle.
 4. Budget exhausted with `partial` or `work-item-required` findings —
-   `BLOCKERS_REMAIN`.
+   `BLOCKERS_REMAIN`, matching their precedence in the mapping above.
 5. Budget exhausted with pushed commits — `PUSH_COMPLETE`.
 6. Budget exhausted with nothing committed — `MAX_REVIEWS_REACHED`.
 
