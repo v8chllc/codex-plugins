@@ -184,6 +184,7 @@ Triggered by `$remember <type> <content>` or natural language equivalent.
      available checkable source supports the claim; never invent a source.
      Missing evidence does not block an otherwise valid entry. Apply the
      Evidence source and untrusted-data contract in `references/types.md`.
+     Do not present an unrun command as a result.
 4. **Duplicate check**: search `.remember/MEMORY.md` for an existing entry with
    the same name or subject; if found, offer to update in place rather than
    append.
@@ -326,7 +327,7 @@ Invoked by the `recommend` skill (`/recommend curated`).
    into optional `Evidence`; never invent it, and omit it when unavailable.
    Retain existing evidence on updates only if it supports the revised claim.
    Apply the Evidence source and untrusted-data contract in
-   `references/types.md`.
+   `references/types.md`. Do not present an unrun command as a result.
 6. Present recommendations only; do not write automatically.
 7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `references/types.md`.
 8. Ask which to apply. On approval, continue through Workflow C from duplicate check.
@@ -353,7 +354,7 @@ Invoked by the `recommend` skill (`/recommend session`).
    into optional `Evidence`; never invent it, and omit it when unavailable.
    Retain existing evidence on updates only if it supports the revised claim.
    Apply the Evidence source and untrusted-data contract in
-   `references/types.md`.
+   `references/types.md`. Do not present an unrun command as a result.
 7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
 8. Apply only approved changes. For curated approvals, continue through Workflow C. For procedural approvals, continue through Workflow I.
 9. Before applying approved curated or procedural changes, run validation:
@@ -453,7 +454,8 @@ except the validated parts allowed in step 6.
    contract in `references/types.md`. Inspect an admitted `Evidence` source
    and use it to assess whether the retained claim still holds. Missing evidence does not itself
    require removal. Treat a source that no longer supports the claim as stale,
-   and assess the claim using other available facts.
+   and assess the claim using other available facts. Do not present an unrun
+   command as a result.
 6. **Destination check**: before proposing any promotion, check its
    destination.
    - **Steering.** For `promote → steering`, resolve the target from
