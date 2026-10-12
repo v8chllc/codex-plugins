@@ -291,7 +291,7 @@ None.
     )
     body = module.build_comment_body(
         report_text=report,
-        summary_text="- The caller will disposition the open finding.",
+        summary_text="- No fixes or follow-up are required.",
         cycle=6,
         outcome=outcome,
         delegation_mode="parallel-subagents",
@@ -307,7 +307,11 @@ None.
         review_url="https://example.test/review/6",
         post_succeeded=True,
     )
-    assert "The caller will disposition the open finding." in body
+    assert (
+        "**Resolved completion:** Complete with advisory findings for caller "
+        "disposition." in body
+    )
+    assert "No fixes or follow-up are required." in body
     assert "#### [F-1] [MEDIUM] Preserve the payload" in body
     assert signal is not None
     assert signal["details"]["open_findings"] == list(outcome.findings)
@@ -382,10 +386,16 @@ def test_comment_body_renders_the_template_without_placeholders() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "icon", "score"),
-    [("clean", "✅", 100), ("passing", "\U0001f7e1", 90), ("failing", "❌", 80)],
+    ("status", "icon", "score", "completion_notice"),
+    [
+        ("clean", "✅", 100, "Complete; no open findings."),
+        ("passing", "\U0001f7e1", 90, "Fixes required before review completion."),
+        ("failing", "❌", 80, "Fixes required before review completion."),
+    ],
 )
-def test_status_icons(status: str, icon: str, score: int) -> None:
+def test_status_icons(
+    status: str, icon: str, score: int, completion_notice: str
+) -> None:
     """Each status renders its icon; the score must sit in that status's band."""
     module = load_post_review_comment()
     report = REPORT.replace(
@@ -427,6 +437,7 @@ def test_status_icons(status: str, icon: str, score: int) -> None:
         findings_closed=0,
     )
     assert f"### {icon} Consensus Review" in body
+    assert f"**Resolved completion:** {completion_notice}" in body
 
 
 def test_main_posts_to_github_by_default(

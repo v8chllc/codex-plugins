@@ -26,6 +26,9 @@ from pathlib import Path
 from string import Template
 
 from review_contract import (
+    COMPLETION_ADVISORY,
+    COMPLETION_CLEAN,
+    COMPLETION_FIX_REQUIRED,
     ContractError,
     ReviewOutcome,
     build_metadata,
@@ -49,6 +52,12 @@ TEMPLATE_NAME = "review-comment.md.tmpl"
 EVIDENCE_HEADING = "### Evidence"
 MIN_SUMMARY_BULLETS = 1
 MAX_SUMMARY_BULLETS = 3
+
+COMPLETION_NOTICES = {
+    COMPLETION_CLEAN: "Complete; no open findings.",
+    COMPLETION_ADVISORY: "Complete with advisory findings for caller disposition.",
+    COMPLETION_FIX_REQUIRED: "Fixes required before review completion.",
+}
 
 
 def read_platform_from_env(repo_dir: str | Path = ".") -> str:
@@ -96,6 +105,14 @@ def validate_summary(summary_text: str) -> str:
             f"bullets, got {len(lines)}."
         )
     return "\n".join(lines)
+
+
+def render_summary(summary_text: str, *, completion_kind: str) -> str:
+    """Render authoritative completion state above the poster-authored summary."""
+    return (
+        f"**Resolved completion:** {COMPLETION_NOTICES[completion_kind]}\n\n"
+        f"{validate_summary(summary_text)}"
+    )
 
 
 def validate_report(report_text: str) -> None:
@@ -185,7 +202,9 @@ def build_comment_body(
                 scope_basis=scope_basis,
                 reviewed_sha=outcome.reviewed_sha,
             ),
-            "summary_text": validate_summary(summary_text),
+            "summary_text": render_summary(
+                summary_text, completion_kind=outcome.completion_kind
+            ),
             "details_text": report_text,
         }
     )
