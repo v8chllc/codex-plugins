@@ -273,8 +273,8 @@ order the finding headings appear in the report. The list includes Latent
 findings. The report in the linked comment holds each finding's full evidence
 and proposed fix.
 
-`ABORT` `reason` is one of `command_failed`, `head_mismatch`, `branch_mismatch`, `platform_auth`,
-`post_failed`, `read_only_role_mutated`.
+`ABORT` `reason` is one of `command_failed`, `head_mismatch`, `branch_mismatch`,
+`platform_auth`, `contract_failed`, `post_failed`, `read_only_role_mutated`.
 
 **Retry limit:** a failed evidence pass is rerun once. Nothing else is retried.
 

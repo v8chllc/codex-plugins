@@ -118,15 +118,17 @@ def test_skill_documents_every_terminal_signal() -> None:
         "ABORT",
     ):
         assert signal in text
-    for reason in (
+    abort_reasons = re.search(r"`ABORT` `reason` is one of (.*?)\.\n", text, re.DOTALL)
+    assert abort_reasons is not None
+    assert set(re.findall(r"`([^`]+)`", abort_reasons.group(1))) == {
+        "command_failed",
         "head_mismatch",
         "branch_mismatch",
         "platform_auth",
-        "post_failed",
         "contract_failed",
+        "post_failed",
         "read_only_role_mutated",
-    ):
-        assert reason in text
+    }
     assert "MAX_CYCLES_REACHED" not in text
 
 
