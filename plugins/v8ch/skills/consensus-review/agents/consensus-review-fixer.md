@@ -36,14 +36,21 @@ review stops converging.
 
 Run the repository's complete documented quality commands, discovered from its
 steering documents and manifests, plus the focused tests for what you changed.
-For each fix, run one mutation-oriented check: removing or inverting the fix must
-fail a named check. Record the command and the result.
+For each `fixed` or `partial` finding whose repair changes only prose, inspect
+the repair against that finding and the intended correction. Record the finding
+ID, what you inspected, and why the correction addresses it under Author
+Verifications. This author verification proves the text-only repair; it needs
+no mutation check or new automated test.
 
-Every applied repair needs a confirmed mutation check: a finding marked `fixed`,
-or `partial` where code changed. Record an unconfirmable check as `not
-confirmed` and report `MUTATION_UNPROVEN` with those finding IDs; nothing is
-committed. A `declined` or `work-item-required` finding applies no repair and
-needs no mutation check.
+Classify by what the changed text does, not its file extension. A command,
+script block, or configuration snippet embedded in a document that an agent or
+tool runs is a code or configuration repair, even when its file is Markdown.
+For each code or configuration repair, run one mutation-oriented check:
+removing or inverting the fix must fail a named check. Record the command and
+result. A `fixed` or `partial` code or configuration repair with an
+unconfirmable check is `not confirmed`; report `MUTATION_UNPROVEN` with those
+finding IDs and commit nothing. A `declined` or `work-item-required` finding
+applies no repair and needs no proof.
 
 A quality failure you cannot resolve ends the run: report `QUALITY_FAILURES`
 with the failing commands and commit nothing.
@@ -87,6 +94,10 @@ Write one fix log to the scratch directory holding, in this order:
 
 - **[F-N]** — removing the fix fails `<named check>` — confirmed | not confirmed
 
+## Author Verifications
+
+- **[F-N]** — <text inspected against the finding and intended correction> — verified
+
 ## Work Items Required
 
 - **[F-N]** WORK-ITEM-REQUIRED — <pr-or-mr-url> — cycle NN — <rationale>
@@ -95,7 +106,9 @@ Write one fix log to the scratch directory holding, in this order:
 A section with no entries contains `None.`
 
 Report the fix log path and one terminal word: `COMPLETE` when every finding has
-a disposition, every applied repair has a confirmed mutation check, and the
-quality commands passed; `MUTATION_UNPROVEN` when a repair is unproven;
+a disposition, every applied repair has either a confirmed mutation check or a
+recorded author verification for a text-only repair, and the quality commands
+passed; `MUTATION_UNPROVEN` when a code or configuration repair lacks a
+confirmed mutation check;
 `QUALITY_FAILURES` when a quality command still fails —
 then stop.
