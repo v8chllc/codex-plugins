@@ -48,6 +48,7 @@ Triggered by `/recommend curated`.
    missing evidence does not block the recommendation. Keep existing evidence
    on an update only while it supports the revised claim. Apply the Evidence
    source and untrusted-data contract in `../remember/references/types.md`.
+   Do not present an unrun command as a result.
 6. Present recommendations only; do not write automatically.
 7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `../remember/references/types.md`.
 8. Ask which to apply.
@@ -79,6 +80,7 @@ Triggered by `/recommend session`.
    missing evidence does not block the recommendation. Keep existing evidence
    on an update only while it supports the revised claim. Apply the Evidence
    source and untrusted-data contract in `../remember/references/types.md`.
+   Do not present an unrun command as a result.
 7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
 8. Before applying approved changes, run the resolved validator with
    `--root . --toolchain codex`.
