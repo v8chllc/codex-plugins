@@ -102,12 +102,14 @@ record the pushed commit SHAs.
 ### 6. Hand back to the review budget
 
 Return the outcome, the commit SHAs (or an empty list), the work-item records,
-and the disposition counts. For a caller-declared single-cycle cap, hand back
-after this one fix pass. The orchestrator reports the fix outcome and any
-uncommitted edits in prose, then emits `CAPPED_REVIEW_COMPLETE` with the review
-URL, score, status, fix commit SHAs, and work items; it never starts a second
-review. For the default budget, the orchestrator routes on the first match, so
-two identical runs cannot end on different signals:
+the disposition counts, failed commands, unproven finding IDs, and uncommitted
+paths. For top-level `review_budget: single_cycle`, hand back after this one fix
+pass. The orchestrator emits `CAPPED_REVIEW_COMPLETE` with the review URL,
+score, status, exact `fixer_outcome`, fix commit SHAs, work items,
+`failed_commands`, `unproven_findings`, and `uncommitted_paths`; it never starts
+a second review. Empty evidence lists are returned for a clean fix path. For the
+default budget, the orchestrator routes on the first match, so two identical
+runs cannot end on different signals:
 
 1. A finding with no disposition, or outcome `MUTATION_UNPROVEN` —
    `BLOCKERS_REMAIN`, whatever the budget allows.

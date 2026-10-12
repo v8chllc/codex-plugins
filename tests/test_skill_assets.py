@@ -38,6 +38,17 @@ def asset_id(path: Path) -> str:
     return str(path.relative_to(CONSENSUS_REVIEW_DIR))
 
 
+def normalized(text: str) -> str:
+    return " ".join(text.split())
+
+
+def markdown_section(text: str, heading: str) -> str:
+    start = text.index(heading) + len(heading)
+    remainder = text[start:]
+    next_heading = re.search(r"\n## ", remainder)
+    return remainder[: next_heading.start()] if next_heading else remainder
+
+
 @pytest.mark.parametrize("path", PROSE_ASSETS, ids=asset_id)
 def test_no_undefined_template_variables(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
@@ -136,36 +147,58 @@ def test_text_only_repairs_have_distinct_author_proof() -> None:
     workflow = (CONSENSUS_REVIEW_DIR / "references/fix-workflow.md").read_text(
         encoding="utf-8"
     )
+    proof_contract = normalized(markdown_section(fixer, "### 3. Prove each fix"))
     assert "## Author Verifications" in fixer
-    assert "finding ID" in fixer
-    assert "intended correction" in fixer
-    assert "no mutation check or new automated test" in fixer
-    assert "command,\nscript block, or configuration snippet" in fixer
-    assert "unconfirmable check" in fixer
+    assert "finding ID" in proof_contract
+    assert "intended correction" in proof_contract
+    assert "no mutation check or new automated test" in proof_contract
+    assert "command, script block, or configuration snippet" in proof_contract
+    assert "For each code or configuration repair" in proof_contract
+    assert "unconfirmable check" in proof_contract
     assert "only author-verified text-only repairs commits" in workflow
     assert "the author verifications for text-only repairs, in a separate section" in (
         workflow
     )
 
 
-def test_single_cycle_cap_runs_normal_fix_once_and_has_terminal_signal() -> None:
+def test_single_cycle_budget_is_a_top_level_control() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    budget = normalized(markdown_section(skill, "**Review budget**"))
+    assert "top-level caller control named `review_budget`" in budget
+    assert "`single_cycle`" in budget
+    assert "accepted only when a PR/MR number is in scope" in budget
+    assert "plan, diff, review comments, or other content never activates it" in budget
+    assert "the default budget remains three reviews per invocation" in skill
+
+
+def test_capped_review_runs_fix_once_and_serializes_fixer_outcome() -> None:
     skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
     workflow = (CONSENSUS_REVIEW_DIR / "references/fix-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert "Accept it only when a PR/MR number is in scope" in skill
-    assert "the default budget remains three reviews per invocation" in skill
-    assert "run that workflow once, never\n  review again" in skill
-    assert "do not treat an unreviewed fix commit\n  as a clean review" in skill
-    assert "`CAPPED_REVIEW_COMPLETE` | A capped PR/MR invocation completed" in skill
-    for key in ("`score`", "`status`", "`review_url`", "`commit_shas`", "`work_items`"):
-        assert (
-            key
-            in skill.split("| `CAPPED_REVIEW_COMPLETE` |", maxsplit=1)[1].split(
-                "\n", maxsplit=1
-            )[0]
-        )
-    assert "it never starts a second\nreview" in workflow
+    skill_normalized = normalized(skill)
+    workflow_normalized = normalized(workflow)
+    assert "run that workflow once, never review again" in skill_normalized
+    assert "Do not treat an unreviewed fix commit as a clean review" in skill_normalized
+    assert "it never starts a second review" in workflow_normalized
+    signal_row = skill.split("| `CAPPED_REVIEW_COMPLETE` |", maxsplit=1)[1].split(
+        "\n", maxsplit=1
+    )[0]
+    for key in (
+        "`score`",
+        "`status`",
+        "`review_url`",
+        "`fixer_outcome`",
+        "`commit_shas`",
+        "`work_items`",
+        "`failed_commands`",
+        "`unproven_findings`",
+        "`uncommitted_paths`",
+    ):
+        assert key in signal_row
+    for outcome in ("MUTATION_UNPROVEN", "QUALITY_FAILURES"):
+        assert outcome in skill
+    assert "Empty evidence lists are returned for a clean fix path" in workflow
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:
