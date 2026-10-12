@@ -130,17 +130,6 @@ def test_valid_memory_json_output_passes(tmp_path: Path) -> None:
     assert payload["issues"] == []
 
 
-def test_legacy_decision_and_error_without_evidence_remain_valid(
-    tmp_path: Path,
-) -> None:
-    write_valid_memory(tmp_path)
-
-    result = run_validate(tmp_path, "--json")
-
-    assert result.returncode == 0
-    assert json.loads(result.stdout)["issues"] == []
-
-
 def test_decision_and_error_evidence_urls_keep_colons(tmp_path: Path) -> None:
     write_valid_memory(tmp_path)
     memory_path = tmp_path / ".remember" / "MEMORY.md"
