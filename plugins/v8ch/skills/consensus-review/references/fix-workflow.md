@@ -39,11 +39,11 @@ workflow returns an outcome and the skill emits the run's single terminal signal
   A cycle with only author-verified text-only repairs commits and continues.
 - `MUTATION_UNPROVEN` — an applied code or configuration repair (`fixed`, or
   `partial` where code or configuration changed) has an unconfirmed mutation
-  check. Commit nothing and return
-  `BLOCKERS_REMAIN` naming those findings: the commit body carries fix evidence,
-  so an unproven repair would record a claim nothing tested.
-- `QUALITY_FAILURES` — commit nothing and return `QUALITY_FAILURES` with the
-  failing commands.
+  check. Commit nothing and map this fixer result to workflow outcome
+  `BLOCKERS_REMAIN`, naming those findings: the commit body carries fix
+  evidence, so an unproven repair would record a claim nothing tested.
+- `QUALITY_FAILURES` — commit nothing and map this fixer result to workflow
+  outcome `QUALITY_FAILURES` with the failing commands.
 
   Leave the fixer's edits in the working tree. They are most of a repair, and
   discarding them loses work with no record. State in the final report that the
@@ -51,8 +51,8 @@ workflow returns an outcome and the skill emits the run's single terminal signal
   platform diff, so those edits are **not** in the next cycle's scope. Commit or
   discard them before re-running.
 - No files changed — nothing is committed or pushed, so `PUSH_COMPLETE`, which
-  reports pushed commits, never applies. Return `NO_CHANGE` with an empty SHA
-  list.
+  reports pushed commits, never applies. Set workflow outcome `NO_CHANGE` with
+  an empty SHA list.
 
 ### 3. Verify the dispositions
 
@@ -101,19 +101,33 @@ record the pushed commit SHAs.
 
 ### 6. Hand back to the review budget
 
-Return the outcome, the commit SHAs (or an empty list), the work-item records,
-the disposition counts, failed commands, unproven finding IDs, and uncommitted
-paths. For top-level `review_budget: single_cycle`, hand back after this one fix
-pass. The orchestrator emits `CAPPED_REVIEW_COMPLETE` with the review URL,
-score, status, exact `fixer_outcome`, fix commit SHAs, work items,
-`failed_commands`, `unproven_findings`, and `uncommitted_paths`; it never starts
-a second review. Empty evidence lists are returned for a clean fix path. For the
-default budget, the orchestrator routes on the first match, so two identical
-runs cannot end on different signals:
+Keep two result fields with distinct, exhaustive vocabularies:
 
-1. A finding with no disposition, or outcome `MUTATION_UNPROVEN` —
-   `BLOCKERS_REMAIN`, whatever the budget allows.
-2. Outcome `QUALITY_FAILURES` — `QUALITY_FAILURES`.
+| Fixer result | Workflow condition | Workflow outcome |
+| --- | --- | --- |
+| `COMPLETE` | changes committed and pushed | `COMPLETE` |
+| `COMPLETE` | no files changed | `NO_CHANGE` |
+| `MUTATION_UNPROVEN` | any | `BLOCKERS_REMAIN` |
+| `QUALITY_FAILURES` | any | `QUALITY_FAILURES` |
+| `COMPLETE` | a finding has no disposition | `BLOCKERS_REMAIN` |
+
+Return `fixer_result` using only `COMPLETE`, `MUTATION_UNPROVEN`, or
+`QUALITY_FAILURES`. Return `workflow_outcome` using only `COMPLETE`,
+`NO_CHANGE`, `BLOCKERS_REMAIN`, or `QUALITY_FAILURES`, according to the table.
+Also return the commit SHAs (or an empty list), work-item records, disposition
+counts, failed commands, unproven finding IDs, and uncommitted paths.
+
+For top-level `review_budget: single_cycle`, hand back after this one fix pass.
+The orchestrator emits `CAPPED_REVIEW_COMPLETE` with the review URL, score,
+status, exact `fixer_result`, exact `workflow_outcome`, fix commit SHAs, work
+items, `failed_commands`, `unproven_findings`, and `uncommitted_paths`; it never
+starts a second review. Empty evidence lists are returned for a clean fix path.
+For the default budget, the orchestrator routes on the first match, so two
+identical runs cannot end on different signals:
+
+1. A finding with no disposition, or fixer result `MUTATION_UNPROVEN` — workflow
+   outcome `BLOCKERS_REMAIN`, whatever the budget allows.
+2. Workflow outcome `QUALITY_FAILURES` — `QUALITY_FAILURES`.
 3. Budget remaining — start the next review cycle.
 4. Budget exhausted with `partial` or `work-item-required` findings —
    `BLOCKERS_REMAIN`.
@@ -131,8 +145,9 @@ post a comment from this workflow.
 
 This workflow writes no comment. It returns to the orchestrator with:
 
+- the `fixer_result` and mapped `workflow_outcome`;
 - the commit SHAs, or `[]` when nothing was committed;
 - the work-item records, or `[]`;
-- the terminal condition: `COMPLETE`, `BLOCKERS_REMAIN`, or `QUALITY_FAILURES`.
+- the supporting failure evidence and disposition counts.
 
 The orchestrator emits the run's single terminal signal.

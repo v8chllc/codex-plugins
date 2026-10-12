@@ -257,7 +257,7 @@ at that point is `null`; an empty list is `[]`.
 | Signal | When | `details` keys |
 | --- | --- | --- |
 | `REVIEW_COMPLETE` | A local review returned, or a PR/MR review reached `clean` | `score`, `status`, `review_url` |
-| `CAPPED_REVIEW_COMPLETE` | A capped PR/MR invocation completed its one review and, when needed, its normal fix workflow; no second review runs | `score`, `status`, `review_url`, `fixer_outcome`, `commit_shas`, `work_items`, `failed_commands`, `unproven_findings`, `uncommitted_paths` |
+| `CAPPED_REVIEW_COMPLETE` | A capped PR/MR invocation completed its one review and, when needed, its normal fix workflow; no second review runs | `score`, `status`, `review_url`, `fixer_result`, `workflow_outcome`, `commit_shas`, `work_items`, `failed_commands`, `unproven_findings`, `uncommitted_paths` |
 | `NO_DIFF` | Nothing to review | `scope` |
 | `EVIDENCE_FAILED` | A reviewer failed the evidence gate twice | `failed_passes` |
 | `QUALITY_FAILURES` | Quality commands still fail after the fix pass; nothing is committed and the fixer's edits stay in the working tree | `score`, `review_url`, `failed_commands` |
@@ -271,11 +271,13 @@ at that point is `null`; an empty list is `[]`.
 
 **Retry limit:** a failed evidence pass is rerun once. Nothing else is retried.
 
-For `CAPPED_REVIEW_COMPLETE`, `fixer_outcome` is `null` when a clean review did
-not run the fixer; otherwise it is the fix workflow's exact outcome. The three
-evidence lists are empty on a clean fix path. On `MUTATION_UNPROVEN` or
-`QUALITY_FAILURES`, populate the applicable finding IDs or commands and list
-every uncommitted repository path left by the fixer.
+For `CAPPED_REVIEW_COMPLETE`, both `fixer_result` and `workflow_outcome` are
+`null` when a clean review did not run the fixer. Otherwise preserve the fixer's
+exact result separately from the workflow's mapped outcome, using the exhaustive
+mapping in `references/fix-workflow.md`. The three evidence lists are empty on a
+clean fix path. On a `MUTATION_UNPROVEN` fixer result or `QUALITY_FAILURES`,
+populate the applicable finding IDs or commands and list every uncommitted
+repository path left by the fixer.
 
 **Length:** what must survive trimming is the score and status, the Must Fix
 findings, the evidence, any material caveat, and the terminal signal. Lead with
