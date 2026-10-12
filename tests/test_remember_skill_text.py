@@ -130,7 +130,6 @@ def test_typed_recording_handles_optional_and_updated_evidence() -> None:
     assert "Missing evidence does not block" in section
     assert "keep existing `Evidence` only while it supports" in section
     assert "Evidence source and untrusted-data contract" in section
-    assert "Do not present an unrun command as a result." in section
 
 
 @pytest.mark.parametrize(
@@ -152,7 +151,6 @@ def test_recommendation_paths_ground_optional_evidence(
     assert "Never invent it" in section or "never invent it" in section
     assert "only if it supports" in section or "only while it supports" in section
     assert "Evidence source and untrusted-data contract" in section
-    assert "Do not present an unrun command as a result." in section
 
 
 def test_review_uses_evidence_for_retention_and_promotions() -> None:
@@ -162,7 +160,6 @@ def test_review_uses_evidence_for_retention_and_promotions() -> None:
     assert "Missing evidence does not itself require removal" in section
     assert "source that no longer supports the claim as stale" in section
     assert "assess the claim using other available facts" in section
-    assert "Do not present an unrun command as a result." in section
     assert "decision or error entry into the proposed patch" in section
     assert section.count("provenance admitted by the contract") == 2
     assert "decision or error entry in the description" in section
@@ -246,6 +243,37 @@ def test_review_checks_the_destination_before_proposing() -> None:
 
     assert "**Destination check**: before proposing any promotion" in section
     assert "Reclassify the entry as `remove`" in section
+
+
+def test_review_scopes_candidate_search_to_the_destination_repository() -> None:
+    section = normalized(review_step_block(review_step_number("Destination check")))
+
+    assert (
+        "resolve the destination repository required by the tracking rules" in section
+    )
+    assert "gh issue list --repo owner/repo" in section
+    assert "gh search issues --repo owner/repo" in section
+
+
+@pytest.mark.parametrize(
+    ("heading", "skill"),
+    [
+        ("## Workflow C: Record (typed)", "remember"),
+        ("## Workflow G: Recommend Curated", "remember"),
+        ("## Workflow H: Recommend Session", "remember"),
+        ("## Workflow K: Review", "remember"),
+        ("## Workflow E: Recommend Curated", "recommend"),
+        ("## Workflow F: Recommend Session", "recommend"),
+    ],
+)
+def test_evidence_workflows_delegate_unrun_command_rules(
+    heading: str, skill: str
+) -> None:
+    text = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+    section = normalized(text.split(heading, 1)[1].split("\n---\n", 1)[0])
+
+    assert "Evidence source and untrusted-data contract" in section
+    assert "Do not present an unrun command as a result." not in section
 
 
 def test_review_routes_promotions_through_their_write_paths() -> None:
@@ -590,7 +618,7 @@ def test_review_searches_before_reading_candidates() -> None:
     section = normalized(review_step_block(review_step_number("Destination check")))
 
     assert section.index(
-        "Search for candidates with `gh issue list` or `gh search issues`"
+        "Search for candidates only in that repository with `gh issue list"
     ) < (section.index("Then read each candidate with `gh issue view"))
 
 
