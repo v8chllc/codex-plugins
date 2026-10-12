@@ -159,7 +159,7 @@ def test_advisory_comment_summary_assigns_disposition_to_caller() -> None:
     )
     assert "caller will" in text
     assert "--outcome-file" in text
-    assert "canonical first summary bullet" in text
+    assert "completion_kind" in text
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:

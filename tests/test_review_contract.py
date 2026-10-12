@@ -395,6 +395,11 @@ def test_advisory_outcome_builds_exact_later_cycle_terminal_payload(
     outcome = contract.resolve_review_outcome(
         report, score=score, status="passing", reviewed_sha="abc1234"
     )
+    assert outcome.completion_kind == contract.COMPLETION_ADVISORY
+    payload = contract.serialize_outcome(outcome)
+    assert payload["completion_kind"] == contract.COMPLETION_ADVISORY
+    assert "summary" not in payload
+    assert "advisory" not in payload
     signal = contract.completion_signal(
         outcome,
         cycle=cycle,
@@ -806,6 +811,17 @@ None.
         )
 
 
+def test_score_breakdown_accepts_the_established_finding_id_header() -> None:
+    report = (FIXTURES_DIR / "review-report.md").read_text(encoding="utf-8")
+    report = report.replace("| Finding | Deduction |", "| Finding ID | Deduction |")
+
+    outcome = contract.resolve_review_outcome(
+        report, score=85, status="passing", reviewed_sha="abc1234"
+    )
+
+    assert outcome.score == 85
+
+
 def test_advisory_payload_includes_accompanying_latent_finding() -> None:
     report = """### Quality Score: 96/100 — Passing
 
@@ -1042,8 +1058,7 @@ def test_deserialization_uses_the_authoritative_status_policy(
         "status": contract.STATUS_CLEAN,
         "reviewed_sha": "abc1234",
         "findings": [finding],
-        "advisory": False,
-        "summary": contract.outcome_summary(98, contract.STATUS_CLEAN, False),
+        "completion_kind": contract.COMPLETION_CLEAN,
     }
 
     outcome = contract.deserialize_outcome(payload)

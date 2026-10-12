@@ -200,13 +200,11 @@ def test_summary_rejects_the_wrong_shape(summary: str) -> None:
         module.validate_summary(summary)
 
 
-def test_summary_first_bullet_must_match_the_resolved_outcome() -> None:
+def test_summary_wording_belongs_to_the_poster() -> None:
     module = load_post_review_comment()
-    expected = "- Review passed with a score of 95/100. Expected outcome."
-    with pytest.raises(module.ContractError, match="contradicts"):
-        module.validate_summary(
-            "- A different outcome.\n", expected_first_bullet=expected
-        )
+    assert module.validate_summary("- Agent-authored outcome wording.\n") == (
+        "- Agent-authored outcome wording."
+    )
 
 
 def test_report_must_carry_merged_evidence() -> None:
@@ -293,7 +291,7 @@ None.
     )
     body = module.build_comment_body(
         report_text=report,
-        summary_text=outcome.summary,
+        summary_text="- The caller will disposition the open finding.",
         cycle=6,
         outcome=outcome,
         delegation_mode="parallel-subagents",
@@ -309,7 +307,7 @@ None.
         review_url="https://example.test/review/6",
         post_succeeded=True,
     )
-    assert outcome.summary in body
+    assert "The caller will disposition the open finding." in body
     assert "#### [F-1] [MEDIUM] Preserve the payload" in body
     assert signal is not None
     assert signal["details"]["open_findings"] == list(outcome.findings)
@@ -418,7 +416,7 @@ def test_status_icons(status: str, icon: str, score: int) -> None:
     )
     body = module.build_comment_body(
         report_text=report,
-        summary_text=outcome.summary,
+        summary_text=f"- Review resolved as {outcome.completion_kind}.",
         cycle=1,
         outcome=outcome,
         delegation_mode="parallel-subagents",

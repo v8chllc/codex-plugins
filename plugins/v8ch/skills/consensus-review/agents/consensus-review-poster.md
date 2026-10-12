@@ -20,9 +20,10 @@ directory; and the absolute path of the consensus-review skill directory.
    missing; do not reconstruct it from the report.
 2. **Write the summary yourself:** one to three bullets drawn from the report's
    Summary section, naming the highest-severity finding and the resolved status.
-   Use the outcome's canonical first summary bullet. An advisory outcome says
-   the caller will disposition open findings. Nothing else in the comment is
-   yours to write.
+   Translate the outcome's `completion_kind` into clear prose: `clean` needs no
+   fixes, `advisory` says the caller will disposition open findings, and
+   `fix-required` proceeds to a fix cycle. Nothing else in the comment is yours
+   to write.
 3. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
 4. **Write two scratch files** outside the repository — one holding the report

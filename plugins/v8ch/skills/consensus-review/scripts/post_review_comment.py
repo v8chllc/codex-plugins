@@ -85,9 +85,7 @@ def read_required_text(path: str | Path, *, label: str) -> str:
     return content
 
 
-def validate_summary(
-    summary_text: str, *, expected_first_bullet: str | None = None
-) -> str:
+def validate_summary(summary_text: str) -> str:
     """Validate the one-to-three bullet summary authored by the poster role."""
     lines = [line.strip() for line in summary_text.splitlines() if line.strip()]
     if not all(line.startswith("- ") for line in lines):
@@ -96,11 +94,6 @@ def validate_summary(
         raise ContractError(
             f"The summary must hold {MIN_SUMMARY_BULLETS} to {MAX_SUMMARY_BULLETS} "
             f"bullets, got {len(lines)}."
-        )
-    if expected_first_bullet is not None and lines[0] != expected_first_bullet:
-        raise ContractError(
-            "The first summary bullet contradicts the resolved review outcome; "
-            f"expected {expected_first_bullet!r}."
         )
     return "\n".join(lines)
 
@@ -192,9 +185,7 @@ def build_comment_body(
                 scope_basis=scope_basis,
                 reviewed_sha=outcome.reviewed_sha,
             ),
-            "summary_text": validate_summary(
-                summary_text, expected_first_bullet=resolved.summary
-            ),
+            "summary_text": validate_summary(summary_text),
             "details_text": report_text,
         }
     )
