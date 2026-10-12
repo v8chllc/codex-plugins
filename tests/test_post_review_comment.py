@@ -49,10 +49,7 @@ None.
 | **Final score** | **90/100** |
 """
 
-SUMMARY = (
-    "- Review passed with a score of 90/100. "
-    "A fix cycle will address the open findings.\n"
-)
+SUMMARY = "- The HIGH finding leaves an empty table body in src/render.py.\n"
 
 REQUIRED_ARGS = [
     "--delegation-mode",
@@ -200,10 +197,10 @@ def test_summary_rejects_the_wrong_shape(summary: str) -> None:
         module.validate_summary(summary)
 
 
-def test_summary_wording_belongs_to_the_poster() -> None:
+def test_summary_validation_preserves_poster_wording() -> None:
     module = load_post_review_comment()
-    assert module.validate_summary("- Agent-authored outcome wording.\n") == (
-        "- Agent-authored outcome wording."
+    assert module.validate_summary("- Agent-authored finding summary.\n") == (
+        "- Agent-authored finding summary."
     )
 
 
@@ -291,7 +288,7 @@ None.
     )
     body = module.build_comment_body(
         report_text=report,
-        summary_text="- No fixes or follow-up are required.",
+        summary_text="- [F-1] Preserve the payload remains open at MEDIUM severity.",
         cycle=6,
         outcome=outcome,
         delegation_mode="parallel-subagents",
@@ -311,7 +308,7 @@ None.
         "**Resolved completion:** Complete with advisory findings for caller "
         "disposition." in body
     )
-    assert "No fixes or follow-up are required." in body
+    assert "[F-1] Preserve the payload remains open at MEDIUM severity." in body
     assert "#### [F-1] [MEDIUM] Preserve the payload" in body
     assert signal is not None
     assert signal["details"]["open_findings"] == list(outcome.findings)
@@ -426,7 +423,7 @@ def test_status_icons(
     )
     body = module.build_comment_body(
         report_text=report,
-        summary_text=f"- Review resolved as {outcome.completion_kind}.",
+        summary_text="- Findings and supporting evidence are included below.",
         cycle=1,
         outcome=outcome,
         delegation_mode="parallel-subagents",

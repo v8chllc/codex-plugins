@@ -75,9 +75,9 @@ exclusive:
 
 A `passing` score of at least 95 with no Must Fix and open Should Fix findings
 keeps the `passing` status. The mechanical contract returns `completion_kind`
-`advisory`; the poster role translates that state into agent-facing summary
-prose. The report keeps every Latent finding so the caller can disposition it
-too.
+`advisory`; the posting script renders that state as the sole completion
+disposition, while the poster role summarizes only findings and evidence. The
+report keeps every Latent finding so the caller can disposition it too.
 
 ### 5. Use history only to close findings
 

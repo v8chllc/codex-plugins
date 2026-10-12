@@ -153,11 +153,14 @@ def test_advisory_completion_follows_successful_post_and_precedes_fixer() -> Non
     assert "exact reviewed SHA" in workflow
 
 
-def test_advisory_comment_summary_assigns_disposition_to_caller() -> None:
+def test_poster_summary_leaves_completion_disposition_to_script() -> None:
     text = (CONSENSUS_REVIEW_DIR / "agents/consensus-review-poster.md").read_text(
         encoding="utf-8"
     )
-    assert "caller will" in text
+    assert "Summary and Evidence sections" in text
+    assert "Do not state or translate the resolved status" in text
+    assert "sole completion disposition deterministically" in text
+    assert "caller will" not in text
     assert "--outcome-file" in text
     assert "completion_kind" in text
 

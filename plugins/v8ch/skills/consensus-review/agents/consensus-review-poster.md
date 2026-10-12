@@ -19,11 +19,11 @@ directory; and the absolute path of the consensus-review skill directory.
    by `scripts/review_contract.py resolve`. Stop without posting if it is
    missing; do not reconstruct it from the report.
 2. **Write the summary yourself:** one to three bullets drawn from the report's
-   Summary section, naming the highest-severity finding and the resolved status.
-   Translate the outcome's `completion_kind` into clear prose: `clean` needs no
-   fixes, `advisory` says the caller will disposition open findings, and
-   `fix-required` proceeds to a fix cycle. Nothing else in the comment is yours
-   to write.
+   Summary and Evidence sections, naming the highest-severity finding and the
+   evidence that supports it. Do not state or translate the resolved status,
+   `completion_kind`, fix requirement, or follow-up disposition. The posting
+   script renders the sole completion disposition deterministically. Nothing
+   else in the comment is yours to write.
 3. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
 4. **Write two scratch files** outside the repository — one holding the report
