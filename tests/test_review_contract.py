@@ -121,6 +121,90 @@ def test_extract_quality_score_reads_the_report_heading() -> None:
     assert contract.extract_quality_score("no heading here") is None
 
 
+@pytest.mark.parametrize(
+    ("severities", "cycle", "expected_score", "expected_advisory"),
+    [
+        (["LOW", "LOW"], 1, 96, True),
+        (["MEDIUM"], 1, 95, True),
+        (["LOW", "LOW", "LOW"], 1, 94, False),
+        (["LOW", "LOW"], 7, 96, True),
+    ],
+)
+def test_advisory_threshold_and_later_cycle(
+    severities: list[str], cycle: int, expected_score: int, expected_advisory: bool
+) -> None:
+    report = f"### Quality Score: {expected_score}/100 — Passing\n\n### Should Fix\n\n"
+    report += "\n\n".join(
+        f"#### [F-{number}] [{severity}] Finding {number}"
+        for number, severity in enumerate(severities, 1)
+    )
+    findings = contract.open_findings(report)
+    scored = [
+        contract.Finding(finding["id"], finding["section"], finding["severity"])
+        for finding in findings
+    ]
+    assert contract.score_findings(scored) == expected_score
+    status = contract.review_status(expected_score, scored)
+    assert status == "passing"
+    assert contract.advisory_completion(expected_score, status, findings) is (
+        expected_advisory
+    )
+    assert [finding["id"] for finding in findings] == [
+        f"F-{number}" for number in range(1, len(severities) + 1)
+    ]
+    assert cycle >= 1
+
+
+def test_advisory_findings_keep_report_order_and_include_latent() -> None:
+    report = """### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [LOW] First finding
+
+#### [F-2] [LOW] Second finding
+
+### Latent Findings
+
+#### [F-3] [LOW] Latent finding
+
+### Plan Notes
+
+#### [P-1] Plan divergence
+"""
+    findings = contract.open_findings(report)
+    assert findings == [
+        {
+            "id": "F-1",
+            "severity": "LOW",
+            "section": "should-fix",
+            "title": "First finding",
+        },
+        {
+            "id": "F-2",
+            "severity": "LOW",
+            "section": "should-fix",
+            "title": "Second finding",
+        },
+        {
+            "id": "F-3",
+            "severity": "LOW",
+            "section": "latent",
+            "title": "Latent finding",
+        },
+    ]
+    assert contract.advisory_completion(95, "passing", findings)
+
+
+def test_must_fix_and_clean_review_cannot_use_advisory_completion() -> None:
+    blocked = [{"section": "must-fix"}, {"section": "should-fix"}]
+    assert not contract.advisory_completion(96, "passing", blocked)
+    assert not contract.advisory_completion(96, "clean", [])
+    assert not contract.advisory_completion(96, "passing", [{"section": "latent"}])
+
+
 def test_valid_metadata_fixture_passes_validation() -> None:
     assert contract.validate_metadata(dict(METADATA["valid"]))
 

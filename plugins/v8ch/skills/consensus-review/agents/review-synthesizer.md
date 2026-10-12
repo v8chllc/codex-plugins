@@ -71,6 +71,12 @@ exclusive:
 - `passing` — score >= 85 and not `clean`.
 - `failing` — score < 85.
 
+A `passing` score of at least 95 with no Must Fix and open Should Fix findings
+keeps the `passing` status. Its summary says the caller will disposition the
+open findings after posting; it does not promise an automatic fix cycle or
+claim that no fixes are required. The report keeps every Latent finding so the
+caller can disposition it too.
+
 ### 5. Use history only to close findings
 
 A prior cycle suppresses a finding only when current code or an explicit current

@@ -108,6 +108,7 @@ def test_skill_documents_every_terminal_signal() -> None:
     text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
     for signal in (
         "REVIEW_COMPLETE",
+        "REVIEW_COMPLETE_WITH_FINDINGS",
         "NO_DIFF",
         "EVIDENCE_FAILED",
         "QUALITY_FAILURES",
@@ -126,6 +127,29 @@ def test_skill_documents_every_terminal_signal() -> None:
     ):
         assert reason in text
     assert "MAX_CYCLES_REACHED" not in text
+
+
+def test_advisory_completion_follows_successful_post_and_precedes_fixer() -> None:
+    text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    workflow = text.split("### 9. Post or return", 1)[1].split(
+        "## Constraints and authority", 1
+    )[0]
+    assert workflow.index("post_failed") < workflow.index(
+        "advisory_completion(score, status, findings)"
+    )
+    assert workflow.index("advisory_completion(score, status, findings)") < (
+        workflow.index("run `references/fix-workflow.md`")
+    )
+    assert "A posted `passing` review for which `advisory_completion` is true" in workflow
+    assert "exact reviewed SHA" in workflow
+
+
+def test_advisory_comment_summary_assigns_disposition_to_caller() -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents/consensus-review-poster.md").read_text(
+        encoding="utf-8"
+    )
+    assert "caller will" in text
+    assert "Do not promise an automatic fix cycle" in text
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:

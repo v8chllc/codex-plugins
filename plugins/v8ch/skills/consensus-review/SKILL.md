@@ -9,7 +9,8 @@ description: Runs an autonomous, evidence-gated consensus code review. Use when 
 
 Produce one evidence-backed review of a change, ranked by consequence, and —
 when a PR/MR is in scope — repair what it found and review again until the
-change is clean or the budget runs out.
+change is clean, a posted 95+ review has only advisory findings, or the budget
+runs out.
 
 The run is autonomous from start to finish. It never prompts the operator. It
 ends with exactly one terminal signal.
@@ -189,9 +190,20 @@ the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
 counts, the repository directory, and the absolute skill directory. A posting
 failure is `ABORT` with `reason` `post_failed`.
 
+Keep the returned comment URL and the SHA captured for this review. Use
+`scripts/review_contract.py`'s `open_findings(report_text)` to carry every open
+Must Fix, Should Fix, and Latent finding in report order. Use its
+`advisory_completion(score, status, findings)` for the 95+ decision. The report
+heading supplies the score; the synthesizer supplies the status. The poster
+must have succeeded before either completion signal is emitted.
+
 ### 10. Branch on status
 
 - `clean` — stop and emit `REVIEW_COMPLETE`.
+- A posted `passing` review for which `advisory_completion` is true — stop and
+  emit `REVIEW_COMPLETE_WITH_FINDINGS`. Include the score, status `passing`,
+  comment URL, exact reviewed SHA, and ordered `open_findings` returned from the
+  same report posted by the poster. The caller dispositions those findings.
 - `passing` or `failing` — run `references/fix-workflow.md`, then review again if
   the budget allows. That workflow returns an outcome; this skill emits the one
   terminal signal.
@@ -238,6 +250,7 @@ at that point is `null`; an empty list is `[]`.
 | Signal | When | `details` keys |
 | --- | --- | --- |
 | `REVIEW_COMPLETE` | A local review returned, or a PR/MR review reached `clean` | `score`, `status`, `review_url` |
+| `REVIEW_COMPLETE_WITH_FINDINGS` | A posted PR/MR review scored at least 95 with open Should Fix and no Must Fix | `score`, `status`, `review_url`, `reviewed_sha`, `open_findings` |
 | `NO_DIFF` | Nothing to review | `scope` |
 | `EVIDENCE_FAILED` | A reviewer failed the evidence gate twice | `failed_passes` |
 | `QUALITY_FAILURES` | Quality commands still fail after the fix pass; nothing is committed and the fixer's edits stay in the working tree | `score`, `review_url`, `failed_commands` |
@@ -245,6 +258,11 @@ at that point is `null`; an empty list is `[]`.
 | `PUSH_COMPLETE` | Fixes committed and pushed, budget exhausted before a `clean` review | `score`, `review_url`, `commit_shas`, `work_items` |
 | `MAX_REVIEWS_REACHED` | The third review is still not `clean` | `score`, `status`, `review_url`, `work_items` |
 | `ABORT` | An unrecoverable error | `reason`, `message`, `score`, `review_url` |
+
+Each `open_findings` entry has `id`, `severity`, `section`, and `title`, in the
+order the finding headings appear in the report. The list includes Latent
+findings. The report in the linked comment holds each finding's full evidence
+and proposed fix.
 
 `ABORT` `reason` is one of `command_failed`, `head_mismatch`, `branch_mismatch`, `platform_auth`,
 `post_failed`, `read_only_role_mutated`.

@@ -259,7 +259,9 @@ def test_status_icons(status: str, icon: str, score: int) -> None:
     """Each status renders its icon; the score must sit in that status's band."""
     module = load_post_review_comment()
     body = module.build_comment_body(
-        report_text=REPORT.replace("91/100", f"{score}/100"),
+        report_text=REPORT.replace(
+            "91/100 — Passing", f"{score}/100 — {module.status_label(status)}"
+        ),
         summary_text=SUMMARY,
         cycle=1,
         status=status,
@@ -486,7 +488,9 @@ def test_a_status_contradicting_the_score_is_refused(status: str, score: int) ->
     module = load_post_review_comment()
     with pytest.raises(module.ContractError):
         module.build_comment_body(
-            report_text=REPORT.replace("91/100", f"{score}/100"),
+            report_text=REPORT.replace(
+                "91/100 — Passing", f"{score}/100 — {module.status_label(status)}"
+            ),
             summary_text=SUMMARY,
             cycle=1,
             status=status,
@@ -499,3 +503,90 @@ def test_a_status_contradicting_the_score_is_refused(status: str, score: int) ->
             findings_opened=0,
             findings_closed=0,
         )
+
+
+def test_report_and_comment_must_agree_on_score_and_status() -> None:
+    module = load_post_review_comment()
+    values = dict(
+        report_text=REPORT,
+        summary_text=SUMMARY,
+        cycle=1,
+        status="passing",
+        score=91,
+        delegation_mode="parallel-subagents",
+        plan_source="none",
+        reviewed_sha="1a2b3c4",
+        scope_basis="full-diff",
+        files_touched=1,
+        findings_opened=1,
+        findings_closed=0,
+    )
+    with pytest.raises(module.ContractError, match="score"):
+        module.build_comment_body(**(values | {"score": 95}))
+    with pytest.raises(module.ContractError, match="status"):
+        module.build_comment_body(
+            **(values | {"report_text": REPORT.replace("Passing", "Fully Clean")})
+        )
+
+
+@pytest.mark.parametrize(
+    ("score", "severities", "cycle", "latent"),
+    [
+        (96, ["LOW", "LOW"], 1, False),
+        (95, ["MEDIUM"], 1, False),
+        (96, ["LOW", "LOW"], 7, False),
+        (96, ["LOW"], 1, True),
+    ],
+)
+def test_advisory_comment_and_signal_payload_share_report_and_reviewed_sha(
+    score: int, severities: list[str], cycle: int, latent: bool
+) -> None:
+    module = load_post_review_comment()
+    import review_contract as contract
+
+    report = (
+        f"### Quality Score: {score}/100 — Passing\n\n"
+        "### Evidence\n\nchecked\n\n### Should Fix\n\n"
+    )
+    report += "\n\n".join(
+        f"#### [F-{number}] [{severity}] Finding {number}"
+        for number, severity in enumerate(severities, 1)
+    )
+    if latent:
+        report += "\n\n### Latent Findings\n\n#### [F-9] [LOW] Latent risk\n"
+    findings = contract.open_findings(report)
+    assert contract.score_findings(
+        contract.Finding(item["id"], item["section"], item["severity"])
+        for item in findings
+    ) == score
+    assert contract.advisory_completion(score, "passing", findings)
+    reviewed_sha = "a123456"
+    body = module.build_comment_body(
+        report_text=report,
+        summary_text="- Passing review; caller will disposition open findings.",
+        cycle=cycle,
+        status="passing",
+        score=score,
+        delegation_mode="parallel-subagents",
+        plan_source="none",
+        reviewed_sha=reviewed_sha,
+        scope_basis="full-diff",
+        files_touched=1,
+        findings_opened=len(findings),
+        findings_closed=0,
+    )
+    metadata = contract.parse_metadata_block(body)
+    assert metadata is not None
+    assert (metadata["score"], metadata["status"], metadata["reviewed_sha"]) == (
+        score,
+        "passing",
+        reviewed_sha,
+    )
+    assert f"*Score: {score}/100 (Passing).*" in body
+    assert f"Reviewed: {reviewed_sha}." in body
+    if latent:
+        assert body.index("[F-1]") < body.index("[F-9]")
+    assert [item["id"] for item in findings] == [
+        *[f"F-{number}" for number in range(1, len(severities) + 1)],
+        *(["F-9"] if latent else []),
+    ]
