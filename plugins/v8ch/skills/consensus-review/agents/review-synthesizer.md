@@ -60,9 +60,12 @@ disposition was `No change required`.
 
 ### 4. Score
 
-Start at 100 and deduct once per emitted defect: CRITICAL 20, HIGH 10, MEDIUM 5,
-LOW 2. A latent finding deducts at the severity of its would-be failure. Plan
-Notes deduct 0. Floor the result at 1.
+The executable authority is
+`scripts/review_contract.py`'s `parse_report_contract(report_text)`. Start at
+100 and deduct once per emitted defect: CRITICAL 20, HIGH 10, MEDIUM 5, LOW 2.
+A latent finding deducts at the severity of its would-be failure. Plan Notes
+deduct 0. Floor the result at 1. The parser recomputes this value and rejects a
+contradictory heading before publication.
 
 Status follows from the score and the finding set, and the three are mutually
 exclusive:
@@ -72,10 +75,10 @@ exclusive:
 - `failing` — score < 85.
 
 A `passing` score of at least 95 with no Must Fix and open Should Fix findings
-keeps the `passing` status. Its summary says the caller will disposition the
-open findings after posting; it does not promise an automatic fix cycle or
-claim that no fixes are required. The report keeps every Latent finding so the
-caller can disposition it too.
+keeps the `passing` status. Use the parsed contract's `summary_directive`: it
+says the caller will disposition the open findings after posting. Do not
+promise an automatic fix cycle or claim that no fixes are required. The report
+keeps every Latent finding so the caller can disposition it too.
 
 ### 5. Use history only to close findings
 

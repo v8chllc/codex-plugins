@@ -134,14 +134,18 @@ def test_advisory_completion_follows_successful_post_and_precedes_fixer() -> Non
     workflow = text.split("### 9. Post or return", 1)[1].split(
         "## Constraints and authority", 1
     )[0]
-    assert workflow.index("post_failed") < workflow.index(
-        "advisory_completion(score, status, findings)"
+    assert workflow.index("parse_report_contract(report_text)") < workflow.index(
+        "post_failed"
     )
-    assert workflow.index("advisory_completion(score, status, findings)") < (
+    assert workflow.index("post_failed") < workflow.index(
+        "parsed contract has `advisory_completion` true"
+    )
+    assert workflow.index("parsed contract has `advisory_completion` true") < (
         workflow.index("run `references/fix-workflow.md`")
     )
     assert (
-        "A posted `passing` review for which `advisory_completion` is true" in workflow
+        "A posted review whose parsed contract has `advisory_completion` true"
+        in workflow
     )
     assert "exact reviewed SHA" in workflow
 
@@ -151,7 +155,7 @@ def test_advisory_comment_summary_assigns_disposition_to_caller() -> None:
         encoding="utf-8"
     )
     assert "caller will" in text
-    assert "Do not promise an automatic fix cycle" in text
+    assert "summary_directive" in text
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:

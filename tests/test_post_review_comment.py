@@ -16,7 +16,7 @@ FIXTURES_DIR = REPO_ROOT / "tests/fixtures/consensus-review"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-REPORT = """### Quality Score: 91/100 — Passing
+REPORT = """### Quality Score: 90/100 — Passing
 
 ### Run Provenance
 
@@ -32,9 +32,17 @@ Delegation: parallel-subagents. Plan: none.
 #### [F-1] [HIGH] Empty row list renders a header with no body
 
 **Location:** src/render.py:48
+
+### Should Fix
+
+None.
+
+### Latent Findings
+
+None.
 """
 
-SUMMARY = "- Review passed with a score of 91/100. A fix cycle follows.\n"
+SUMMARY = "- Review passed with a score of 90/100. A fix cycle follows.\n"
 
 REQUIRED_ARGS = [
     "--delegation-mode",
@@ -181,7 +189,7 @@ def test_report_must_not_nest_a_details_block() -> None:
 def test_score_comes_only_from_the_report_heading() -> None:
     """No override exists: published metadata cannot contradict the report."""
     module = load_post_review_comment()
-    assert module.resolve_score(REPORT) == 91
+    assert module.resolve_score(REPORT) == 90
     with pytest.raises(module.ContractError):
         module.resolve_score("### Evidence\n")
     assert "--score" not in module.build_parser().format_help()
@@ -194,7 +202,7 @@ def test_comment_body_opens_with_exact_v2_metadata(tmp_path: Path) -> None:
         summary_text=SUMMARY,
         cycle=2,
         status="passing",
-        score=91,
+        score=90,
         delegation_mode="parallel-subagents",
         plan_source="none",
         reviewed_sha="1a2b3c4",
@@ -216,7 +224,7 @@ def test_comment_body_opens_with_exact_v2_metadata(tmp_path: Path) -> None:
         "reviewed_sha": "1a2b3c4",
         "schema_version": 2,
         "scope_basis": "full-diff",
-        "score": 91,
+        "score": 90,
         "status": "passing",
         "type": "review",
     }
@@ -230,7 +238,7 @@ def test_comment_body_renders_the_template_without_placeholders() -> None:
         summary_text=SUMMARY,
         cycle=2,
         status="passing",
-        score=91,
+        score=90,
         delegation_mode="parallel-subagents",
         plan_source="supplied: .plan/feature.md",
         reviewed_sha="1a2b3c4",
@@ -240,7 +248,7 @@ def test_comment_body_renders_the_template_without_placeholders() -> None:
         findings_closed=1,
     )
     assert "### \U0001f7e1 Consensus Review — Cycle 02" in body
-    assert "*Score: 91/100 (Passing).*" in body
+    assert "*Score: 90/100 (Passing).*" in body
     assert (
         "Delegation: parallel-subagents. Plan: supplied: .plan/feature.md. "
         "Scope: delta-since:9f3a25e. Reviewed: 1a2b3c4." in body
@@ -252,20 +260,36 @@ def test_comment_body_renders_the_template_without_placeholders() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "icon", "score"),
-    [("clean", "✅", 96), ("passing", "\U0001f7e1", 91), ("failing", "❌", 70)],
+    ("status", "icon", "report"),
+    [
+        (
+            "clean",
+            "✅",
+            REPORT.replace("90/100 — Passing", "100/100 — Fully Clean").replace(
+                "#### [F-1] [HIGH] Empty row list renders a header with no body\n\n"
+                "**Location:** src/render.py:48",
+                "None.",
+            ),
+        ),
+        ("passing", "\U0001f7e1", REPORT),
+        (
+            "failing",
+            "❌",
+            REPORT.replace("90/100 — Passing", "80/100 — Failing").replace(
+                "[HIGH]", "[CRITICAL]"
+            ),
+        ),
+    ],
 )
-def test_status_icons(status: str, icon: str, score: int) -> None:
+def test_status_icons(status: str, icon: str, report: str) -> None:
     """Each status renders its icon; the score must sit in that status's band."""
     module = load_post_review_comment()
     body = module.build_comment_body(
-        report_text=REPORT.replace(
-            "91/100 — Passing", f"{score}/100 — {module.status_label(status)}"
-        ),
+        report_text=report,
         summary_text=SUMMARY,
         cycle=1,
         status=status,
-        score=score,
+        score=module.resolve_score(report),
         delegation_mode="parallel-subagents",
         plan_source="none",
         reviewed_sha="1a2b3c4",
@@ -489,7 +513,7 @@ def test_a_status_contradicting_the_score_is_refused(status: str, score: int) ->
     with pytest.raises(module.ContractError):
         module.build_comment_body(
             report_text=REPORT.replace(
-                "91/100 — Passing", f"{score}/100 — {module.status_label(status)}"
+                "90/100 — Passing", f"{score}/100 — {module.status_label(status)}"
             ),
             summary_text=SUMMARY,
             cycle=1,
@@ -512,7 +536,7 @@ def test_report_and_comment_must_agree_on_score_and_status() -> None:
         summary_text=SUMMARY,
         cycle=1,
         status="passing",
-        score=91,
+        score=90,
         delegation_mode="parallel-subagents",
         plan_source="none",
         reviewed_sha="1a2b3c4",
@@ -526,6 +550,26 @@ def test_report_and_comment_must_agree_on_score_and_status() -> None:
     with pytest.raises(module.ContractError, match="status"):
         module.build_comment_body(
             **(values | {"report_text": REPORT.replace("Passing", "Fully Clean")})
+        )
+
+
+def test_comment_rejects_contradictory_quality_headings() -> None:
+    module = load_post_review_comment()
+    contradictory = REPORT + "\n### Quality Score: 90/100 — Fully Clean\n"
+    with pytest.raises(module.ContractError, match="exactly one"):
+        module.build_comment_body(
+            report_text=contradictory,
+            summary_text=SUMMARY,
+            cycle=1,
+            status="passing",
+            score=90,
+            delegation_mode="parallel-subagents",
+            plan_source="none",
+            reviewed_sha="1a2b3c4",
+            scope_basis="full-diff",
+            files_touched=1,
+            findings_opened=1,
+            findings_closed=0,
         )
 
 
@@ -544,25 +588,24 @@ def test_advisory_comment_and_signal_payload_share_report_and_reviewed_sha(
     module = load_post_review_comment()
     import review_contract as contract
 
-    report = (
-        f"### Quality Score: {score}/100 — Passing\n\n"
-        "### Evidence\n\nchecked\n\n### Should Fix\n\n"
-    )
-    report += "\n\n".join(
+    finding_lines = "\n\n".join(
         f"#### [F-{number}] [{severity}] Finding {number}"
         for number, severity in enumerate(severities, 1)
     )
+    latent_line = "None."
     if latent:
-        report += "\n\n### Latent Findings\n\n#### [F-9] [LOW] Latent risk\n"
-    findings = contract.open_findings(report)
-    assert (
-        contract.score_findings(
-            contract.Finding(item["id"], item["section"], item["severity"])
-            for item in findings
-        )
-        == score
+        latent_line = f"#### [F-{len(severities) + 1}] [LOW] Latent risk"
+    report = (
+        f"### Quality Score: {score}/100 — Passing\n\n"
+        "### Evidence\n\nchecked\n\n"
+        "### Must Fix\n\nNone.\n\n"
+        f"### Should Fix\n\n{finding_lines}\n\n"
+        f"### Latent Findings\n\n{latent_line}\n"
     )
-    assert contract.advisory_completion(score, "passing", findings)
+    report_contract = contract.parse_report_contract(report)
+    findings = report_contract.open_findings
+    assert report_contract.score == score
+    assert report_contract.advisory_completion
     reviewed_sha = "a123456"
     body = module.build_comment_body(
         report_text=report,
@@ -588,8 +631,8 @@ def test_advisory_comment_and_signal_payload_share_report_and_reviewed_sha(
     assert f"*Score: {score}/100 (Passing).*" in body
     assert f"Reviewed: {reviewed_sha}." in body
     if latent:
-        assert body.index("[F-1]") < body.index("[F-9]")
+        assert body.index("[F-1]") < body.index(f"[F-{len(severities) + 1}]")
     assert [item["id"] for item in findings] == [
         *[f"F-{number}" for number in range(1, len(severities) + 1)],
-        *(["F-9"] if latent else []),
+        *([f"F-{len(severities) + 1}"] if latent else []),
     ]

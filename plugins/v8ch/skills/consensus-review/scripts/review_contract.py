@@ -19,6 +19,7 @@ from typing import Any
 SCHEMA_VERSION = 2
 COMMENT_MARKER = "consensus-review"
 COMMENT_TYPE = "review"
+EVIDENCE_HEADING = "### Evidence"
 
 SEVERITIES: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 SEVERITY_DEDUCTIONS: dict[str, int] = {
@@ -80,7 +81,9 @@ COUNT_KEYS: tuple[str, ...] = ("files_touched", "findings_opened", "findings_clo
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
-QUALITY_SCORE_RE = re.compile(r"^### Quality Score:\s*(\d+)/100\b", re.MULTILINE)
+QUALITY_SCORE_RE = re.compile(
+    r"^### Quality Score:\s*(\d+)/100 — (Fully Clean|Passing|Failing)$"
+)
 FINDING_HEADING_RE = re.compile(
     r"^#### \[(F-\d+)\] \[(CRITICAL|HIGH|MEDIUM|LOW)\] (.+)$"
 )
@@ -130,6 +133,17 @@ class Finding:
             )
 
 
+@dataclass(frozen=True)
+class ReportContract:
+    """Authoritative score, routing, and summary contract for one report."""
+
+    score: int
+    status: str
+    open_findings: tuple[dict[str, str], ...]
+    advisory_completion: bool
+    summary_directive: str
+
+
 def deduction(finding: Finding) -> int:
     """Return the points a single finding deducts.
 
@@ -172,44 +186,156 @@ def status_label(status: str) -> str:
         raise ContractError(f"Unknown status '{status}'.") from None
 
 
-def extract_quality_score(report_text: str) -> int | None:
-    """Return the raw score from a synthesized report heading, if present."""
-    match = QUALITY_SCORE_RE.search(report_text)
-    return int(match.group(1)) if match else None
+def _top_level_lines(report_text: str, *, prefix: str | None = None) -> list[str]:
+    """Return lines outside fenced code blocks, optionally filtered by prefix."""
+    lines: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    for line in report_text.splitlines():
+        fence_match = re.match(r"^(`{3,}|~{3,})", line)
+        if fence_character is not None:
+            if (
+                fence_match
+                and fence_match.group(1)[0] == fence_character
+                and len(fence_match.group(1)) >= fence_length
+            ):
+                fence_character = None
+                fence_length = 0
+            continue
+        if fence_match:
+            fence_character = fence_match.group(1)[0]
+            fence_length = len(fence_match.group(1))
+            continue
+        if prefix is None or line.startswith(prefix):
+            lines.append(line)
+    if fence_character is not None:
+        raise ContractError("The report contains an unclosed fenced code block.")
+    return lines
 
 
 def open_findings(report_text: str) -> list[dict[str, str]]:
-    """Read the open findings from a synthesized report in report order."""
+    """Read and validate top-level findings in report order."""
     section: str | None = None
     findings: list[dict[str, str]] = []
-    for line in report_text.splitlines():
+    seen_sections: list[str] = []
+    for line in _top_level_lines(report_text):
         if line.startswith("### "):
             section = FINDING_SECTIONS.get(line.strip())
+            if section is not None:
+                if section in seen_sections:
+                    raise ContractError(
+                        f"Finding section {line.strip()!r} is duplicated."
+                    )
+                seen_sections.append(section)
             continue
-        if section is None:
+        if not line.startswith("#### "):
             continue
         match = FINDING_HEADING_RE.match(line)
-        if match:
-            identifier, severity, title = match.groups()
-            findings.append(
-                {
-                    "id": identifier,
-                    "severity": severity,
-                    "section": section,
-                    "title": title,
-                }
-            )
+        looks_like_finding = line.startswith("#### [F")
+        if section is None:
+            if looks_like_finding:
+                raise ContractError(
+                    f"Finding heading {line!r} is outside a finding section."
+                )
+            continue
+        if not match:
+            raise ContractError(f"Malformed finding heading in {section}: {line!r}.")
+        identifier, severity, title = match.groups()
+        findings.append(
+            {
+                "id": identifier,
+                "severity": severity,
+                "section": section,
+                "title": title,
+            }
+        )
+
+    expected_sections = list(FINDING_SECTIONS.values())
+    if seen_sections != expected_sections:
+        raise ContractError(
+            "Finding sections must appear exactly once in this order: "
+            + ", ".join(FINDING_SECTIONS)
+            + "."
+        )
+    identifiers = [finding["id"] for finding in findings]
+    expected = [f"F-{number}" for number in range(1, len(findings) + 1)]
+    if identifiers != expected:
+        raise ContractError(
+            "Finding IDs must be unique and sequential in report order; expected "
+            f"{expected}, got {identifiers}."
+        )
     return findings
 
 
-def advisory_completion(
-    score: int, status: str, findings: Iterable[dict[str, str]]
-) -> bool:
-    """Return whether a posted review can hand open findings to its caller."""
-    if score < CLEAN_MIN_SCORE or status != STATUS_PASSING:
-        return False
+def parse_report_contract(report_text: str) -> ReportContract:
+    """Validate a report and return its authoritative completion contract."""
+    lowered = report_text.lower()
+    if "<details>" in lowered or "</details>" in lowered:
+        raise ContractError(
+            "The report contains a <details> or </details> tag. The comment wraps "
+            "the report in one <details> element, and recovery cuts at the first "
+            "closing tag, so either one truncates the recovered report."
+        )
+    top_level_lines = _top_level_lines(report_text)
+    if EVIDENCE_HEADING not in top_level_lines:
+        raise ContractError(
+            "The report is missing its merged '### Evidence' section; the "
+            "synthesizer did not complete."
+        )
+    quality_headings = [
+        line for line in top_level_lines if line.startswith("### Quality Score:")
+    ]
+    if len(quality_headings) != 1:
+        raise ContractError(
+            "The report must contain exactly one Quality Score heading."
+        )
+    quality_match = QUALITY_SCORE_RE.fullmatch(quality_headings[0])
+    if not quality_match:
+        raise ContractError(
+            "The Quality Score heading must be '### Quality Score: N/100 — "
+            "<Fully Clean | Passing | Failing>'."
+        )
+
+    findings = open_findings(report_text)
+    scored_findings = [
+        Finding(item["id"], item["section"], item["severity"]) for item in findings
+    ]
+    score = score_findings(scored_findings)
+    status = review_status(score, scored_findings)
+    heading_score = int(quality_match.group(1))
+    heading_status = {label: candidate for candidate, label in STATUS_LABELS.items()}[
+        quality_match.group(2)
+    ]
+    if heading_score != score:
+        raise ContractError(
+            f"The report score {heading_score} contradicts the computed score {score}."
+        )
+    if heading_status != status:
+        raise ContractError(
+            f"The report status {heading_status!r} contradicts the computed status "
+            f"{status!r}."
+        )
+
     sections = [finding["section"] for finding in findings]
-    return MUST_FIX not in sections and SHOULD_FIX in sections
+    advisory = (
+        score >= CLEAN_MIN_SCORE
+        and status == STATUS_PASSING
+        and MUST_FIX not in sections
+        and SHOULD_FIX in sections
+    )
+    if advisory:
+        summary_directive = "Say the caller will disposition the open findings."
+    elif status == STATUS_CLEAN:
+        summary_directive = "Say the review is fully clean."
+    else:
+        summary_directive = "State the status and highest-severity finding."
+    return ReportContract(
+        score=score,
+        status=status,
+        open_findings=tuple(findings),
+        advisory_completion=advisory,
+        summary_directive=summary_directive,
+    )
 
 
 def _require_int(value: object, *, key: str, minimum: int, maximum: int | None) -> int:

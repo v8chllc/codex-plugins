@@ -35,6 +35,42 @@ def build_findings(raw: list[dict[str, Any]]) -> list[contract.Finding]:
     ]
 
 
+def build_report(
+    severities: list[str], *, section: str = "Should Fix", latent: bool = False
+) -> str:
+    finding_lines = "\n\n".join(
+        f"#### [F-{number}] [{severity}] Finding {number}"
+        for number, severity in enumerate(severities, 1)
+    )
+    latent_line = ""
+    if latent:
+        number = len(severities) + 1
+        latent_line = f"#### [F-{number}] [LOW] Latent risk"
+    section_name = section.lower().replace(" ", "-")
+    scored = [
+        contract.Finding(f"F-{number}", section_name, severity)
+        for number, severity in enumerate(severities, 1)
+    ]
+    if latent:
+        scored.append(
+            contract.Finding(f"F-{len(severities) + 1}", contract.LATENT, "LOW")
+        )
+    score = contract.score_findings(scored)
+    status = contract.review_status(score, scored)
+    contents = {
+        "Must Fix": finding_lines if section == "Must Fix" else "None.",
+        "Should Fix": finding_lines if section == "Should Fix" else "None.",
+        "Latent Findings": latent_line or "None.",
+    }
+    return (
+        f"### Quality Score: {score}/100 — {contract.status_label(status)}\n\n"
+        "### Evidence\n\nchecked\n\n"
+        f"### Must Fix\n\n{contents['Must Fix']}\n\n"
+        f"### Should Fix\n\n{contents['Should Fix']}\n\n"
+        f"### Latent Findings\n\n{contents['Latent Findings']}\n"
+    )
+
+
 def metadata_case(case: dict[str, Any]) -> dict[str, Any]:
     payload = dict(METADATA["valid"])
     payload.update(case.get("overrides", {}))
@@ -115,12 +151,6 @@ def test_status_labels() -> None:
         contract.status_label("unknown")
 
 
-def test_extract_quality_score_reads_the_report_heading() -> None:
-    report = "intro\n\n### Quality Score: 73/100 — Failing\n\nrest\n"
-    assert contract.extract_quality_score(report) == 73
-    assert contract.extract_quality_score("no heading here") is None
-
-
 @pytest.mark.parametrize(
     ("severities", "cycle", "expected_score", "expected_advisory"),
     [
@@ -133,23 +163,11 @@ def test_extract_quality_score_reads_the_report_heading() -> None:
 def test_advisory_threshold_and_later_cycle(
     severities: list[str], cycle: int, expected_score: int, expected_advisory: bool
 ) -> None:
-    report = f"### Quality Score: {expected_score}/100 — Passing\n\n### Should Fix\n\n"
-    report += "\n\n".join(
-        f"#### [F-{number}] [{severity}] Finding {number}"
-        for number, severity in enumerate(severities, 1)
-    )
-    findings = contract.open_findings(report)
-    scored = [
-        contract.Finding(finding["id"], finding["section"], finding["severity"])
-        for finding in findings
-    ]
-    assert contract.score_findings(scored) == expected_score
-    status = contract.review_status(expected_score, scored)
-    assert status == "passing"
-    assert contract.advisory_completion(expected_score, status, findings) is (
-        expected_advisory
-    )
-    assert [finding["id"] for finding in findings] == [
+    result = contract.parse_report_contract(build_report(severities))
+    assert result.score == expected_score
+    assert result.status == "passing"
+    assert result.advisory_completion is expected_advisory
+    assert [finding["id"] for finding in result.open_findings] == [
         f"F-{number}" for number in range(1, len(severities) + 1)
     ]
     assert cycle >= 1
@@ -195,14 +213,77 @@ None.
             "title": "Latent finding",
         },
     ]
-    assert contract.advisory_completion(95, "passing", findings)
+    result = contract.parse_report_contract(build_report(["LOW"], latent=True))
+    assert result.advisory_completion
+    assert "caller will disposition" in result.summary_directive
 
 
 def test_must_fix_and_clean_review_cannot_use_advisory_completion() -> None:
-    blocked = [{"section": "must-fix"}, {"section": "should-fix"}]
-    assert not contract.advisory_completion(96, "passing", blocked)
-    assert not contract.advisory_completion(96, "clean", [])
-    assert not contract.advisory_completion(96, "passing", [{"section": "latent"}])
+    must_fix = contract.parse_report_contract(build_report(["LOW"], section="Must Fix"))
+    clean = contract.parse_report_contract(build_report([]))
+    latent = contract.parse_report_contract(build_report([], latent=True))
+    assert not must_fix.advisory_completion
+    assert not clean.advisory_completion
+    assert not latent.advisory_completion
+
+
+def test_report_parser_ignores_headings_inside_fences() -> None:
+    report = build_report(["MEDIUM"]) + (
+        "\n```markdown\n### Must Fix\n\n#### [F-99] [CRITICAL] Example only\n```\n"
+    )
+    result = contract.parse_report_contract(report)
+    assert [finding["id"] for finding in result.open_findings] == ["F-1"]
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "#### [F-1] [BLOCKER] Finding 1",
+        "#### [F-2] [MEDIUM] Finding 1",
+        "#### [F-1] [MEDIUM] Finding 1\n\n#### [F-1] [LOW] Duplicate",
+    ],
+)
+def test_report_parser_rejects_malformed_or_unordered_findings(
+    replacement: str,
+) -> None:
+    report = build_report(["MEDIUM"]).replace(
+        "#### [F-1] [MEDIUM] Finding 1", replacement
+    )
+    with pytest.raises(contract.ContractError):
+        contract.parse_report_contract(report)
+
+
+def test_report_contract_recomputes_score_and_rejects_contradictions() -> None:
+    report = build_report(["MEDIUM"]).replace("95/100", "96/100")
+    with pytest.raises(contract.ContractError, match="computed score"):
+        contract.parse_report_contract(report)
+
+
+def test_report_contract_rejects_multiple_quality_headings() -> None:
+    report = build_report(["MEDIUM"]) + "\n### Quality Score: 95/100 — Passing\n"
+    with pytest.raises(contract.ContractError, match="exactly one"):
+        contract.parse_report_contract(report)
+
+
+def test_report_contract_rejects_unclosed_fences_and_reordered_sections() -> None:
+    with pytest.raises(contract.ContractError, match="unclosed"):
+        contract.parse_report_contract(build_report(["MEDIUM"]) + "\n```markdown\n")
+    report = build_report(["MEDIUM"])
+    must_fix = "### Must Fix\n\nNone."
+    should_fix = "### Should Fix\n\n#### [F-1] [MEDIUM] Finding 1"
+    reordered = report.replace(
+        f"{must_fix}\n\n{should_fix}", f"{should_fix}\n\n{must_fix}"
+    )
+    with pytest.raises(contract.ContractError, match="exactly once"):
+        contract.parse_report_contract(reordered)
+
+
+def test_report_contract_requires_top_level_evidence() -> None:
+    report = build_report(["MEDIUM"]).replace(
+        "### Evidence\n\nchecked", "```markdown\n### Evidence\n```"
+    )
+    with pytest.raises(contract.ContractError, match="Evidence"):
+        contract.parse_report_contract(report)
 
 
 def test_valid_metadata_fixture_passes_validation() -> None:

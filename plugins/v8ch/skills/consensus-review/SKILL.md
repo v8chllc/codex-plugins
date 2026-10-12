@@ -184,23 +184,25 @@ and stop without a score.
 **No PR/MR:** return the report unchanged and emit `REVIEW_COMPLETE` with
 `review_url` `null`. A local review never fixes.
 
-**PR/MR:** run `consensus-review-poster` once with the report, the PR/MR number,
+**PR/MR:** call `scripts/review_contract.py`'s
+`parse_report_contract(report_text)` once. It validates the report, recomputes
+the score and status, and returns the ordered findings, advisory outcome, and
+summary directive. Pass those authoritative values and the report to
+`consensus-review-poster` once with the PR/MR number,
 the cycle, the status, the delegation mode, the plan source, the reviewed SHA,
 the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
 counts, the repository directory, and the absolute skill directory. A posting
 failure is `ABORT` with `reason` `post_failed`.
 
-Keep the returned comment URL and the SHA captured for this review. Use
-`scripts/review_contract.py`'s `open_findings(report_text)` to carry every open
-Must Fix, Should Fix, and Latent finding in report order. Use its
-`advisory_completion(score, status, findings)` for the 95+ decision. The report
-heading supplies the score; the synthesizer supplies the status. The poster
-must have succeeded before either completion signal is emitted.
+Keep the returned comment URL and the SHA captured for this review. Carry the
+score, status, `open_findings`, and `advisory_completion` from the same parsed
+contract used by the poster. The poster must have succeeded before either
+completion signal is emitted.
 
 ### 10. Branch on status
 
 - `clean` — stop and emit `REVIEW_COMPLETE`.
-- A posted `passing` review for which `advisory_completion` is true — stop and
+- A posted review whose parsed contract has `advisory_completion` true — stop and
   emit `REVIEW_COMPLETE_WITH_FINDINGS`. Include the score, status `passing`,
   comment URL, exact reviewed SHA, and ordered `open_findings` returned from the
   same report posted by the poster. The caller dispositions those findings.

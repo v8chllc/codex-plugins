@@ -19,7 +19,6 @@ docstring.
 from __future__ import annotations
 
 import argparse
-import re
 import shutil
 import subprocess
 import sys
@@ -28,8 +27,9 @@ from string import Template
 
 from review_contract import (
     ContractError,
+    ReportContract,
     build_metadata,
-    extract_quality_score,
+    parse_report_contract,
     render_metadata_block,
     status_label,
 )
@@ -45,7 +45,6 @@ STATUS_EMOJI = {
 }
 
 TEMPLATE_NAME = "review-comment.md.tmpl"
-EVIDENCE_HEADING = "### Evidence"
 MIN_SUMMARY_BULLETS = 1
 MAX_SUMMARY_BULLETS = 3
 
@@ -97,35 +96,19 @@ def validate_summary(summary_text: str) -> str:
     return "\n".join(lines)
 
 
-def validate_report(report_text: str) -> None:
+def validate_report(report_text: str) -> ReportContract:
     """Reject a report that cannot be posted or recovered intact."""
-    if EVIDENCE_HEADING not in report_text:
-        raise ContractError(
-            "The report is missing its merged '### Evidence' section; the "
-            "synthesizer did not complete."
-        )
-    lowered = report_text.lower()
-    if "<details>" in lowered or "</details>" in lowered:
-        raise ContractError(
-            "The report contains a <details> or </details> tag. The comment wraps "
-            "the report in one <details> element, and recovery cuts at the first "
-            "closing tag, so either one truncates the recovered report."
-        )
+    return parse_report_contract(report_text)
 
 
 def resolve_score(report_text: str) -> int:
-    """Return the raw score from the report's Quality Score heading.
+    """Return the score from the validated report contract.
 
-    The heading is the only source. An override flag would let a caller publish
-    metadata that contradicts the visible report, and the synthesizer alone
-    decides the score.
+    The contract recomputes the score from validated findings and rejects a
+    contradictory heading. An override flag would let a caller publish metadata
+    that contradicts the visible report.
     """
-    extracted = extract_quality_score(report_text)
-    if extracted is None:
-        raise ContractError(
-            "No raw score found. The report needs a '### Quality Score: N/100' heading."
-        )
-    return extracted
+    return validate_report(report_text).score
 
 
 def template_path() -> Path:
@@ -168,18 +151,16 @@ def build_comment_body(
     findings_closed: int,
 ) -> str:
     """Build the full review comment, metadata block first."""
-    validate_report(report_text)
-    report_score = resolve_score(report_text)
+    report_contract = validate_report(report_text)
+    report_score = report_contract.score
     if report_score != score:
         raise ContractError(
             f"The report score {report_score} contradicts the posted score {score}."
         )
-    report_label = status_label(status)
-    heading = f"### Quality Score: {score}/100 — {report_label}"
-    if not re.search(rf"^{re.escape(heading)}$", report_text, re.MULTILINE):
+    if report_contract.status != status:
         raise ContractError(
-            "The report heading must agree with posted status "
-            f"{status!r} and score {score}."
+            f"The report status {report_contract.status!r} contradicts the posted "
+            f"status {status!r}."
         )
     metadata = build_metadata(
         cycle=cycle,

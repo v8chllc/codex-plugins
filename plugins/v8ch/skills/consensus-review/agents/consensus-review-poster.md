@@ -14,14 +14,14 @@ directory; and the absolute path of the consensus-review skill directory.
 
 ## Success criteria
 
-1. **Stop without posting if the report has no `### Quality Score:` heading.**
-   Report that and stop; do not compose a substitute.
+1. **Validate through the executable contract.** Use
+   `scripts/review_contract.py`'s `parse_report_contract(report_text)`. Stop
+   without posting on any contract error; do not compose a substitute.
 2. **Write the summary yourself:** one to three bullets drawn from the report's
-   Summary section, naming the highest-severity finding and the status. Nothing
-   else in the comment is yours to write. For a `passing` review scoring at
-   least 95 with no Must Fix and open Should Fix findings, say the caller will
-   disposition the open findings. Do not promise an automatic fix cycle or say
-   no fixes are required.
+   Summary section, naming the highest-severity finding and the returned status.
+   Follow the returned `summary_directive`; it is the authority for advisory
+   wording, including when it says the caller will disposition open findings.
+   Nothing else in the comment is yours to write.
 3. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
 4. **Write two scratch files** outside the repository — one holding the report
