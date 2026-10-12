@@ -211,11 +211,8 @@ def test_fix_workflow_maps_every_fixer_result_to_a_workflow_outcome() -> None:
     )
     handback = normalized(markdown_section(workflow, "### 6. Hand back"))
     for mapping in (
-        "`COMPLETE` | `partial`; changes committed and pushed | `BLOCKERS_REMAIN`",
-        "`COMPLETE` | `partial`; no files changed | `BLOCKERS_REMAIN`",
-        "`COMPLETE` | `work-item-required`; changes committed and pushed | "
+        "`COMPLETE` | a finding is `partial` or `work-item-required` | "
         "`BLOCKERS_REMAIN`",
-        "`COMPLETE` | `work-item-required`; no files changed | `BLOCKERS_REMAIN`",
         "`COMPLETE` | no unresolved dispositions; changes committed and pushed | "
         "`COMPLETE`",
         "`COMPLETE` | no unresolved dispositions; no files changed | `NO_CHANGE`",
@@ -224,10 +221,7 @@ def test_fix_workflow_maps_every_fixer_result_to_a_workflow_outcome() -> None:
         "`COMPLETE` | a finding has no disposition | `BLOCKERS_REMAIN`",
     ):
         assert mapping in handback
-    assert (
-        "Apply the `partial`, `work-item-required`, and missing-disposition rows "
-        "before evaluating whether changes were committed or no files changed"
-    ) in handback
+    assert "the first matching row wins" in handback
     assert (
         "Return `fixer_result` using only `COMPLETE`, `MUTATION_UNPROVEN`, or "
         "`QUALITY_FAILURES`"
@@ -236,6 +230,15 @@ def test_fix_workflow_maps_every_fixer_result_to_a_workflow_outcome() -> None:
         "Return `workflow_outcome` using only `COMPLETE`, `NO_CHANGE`, "
         "`BLOCKERS_REMAIN`, or `QUALITY_FAILURES`"
     ) in handback
+
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    signal_contract = normalized(
+        markdown_section(skill, "For `CAPPED_REVIEW_COMPLETE`")
+    )
+    assert (
+        "`workflow_outcome` returned by `references/fix-workflow.md`" in signal_contract
+    )
+    assert "missing dispositions precedence" not in signal_contract
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:
