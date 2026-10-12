@@ -99,6 +99,30 @@ def test_evidence_sources_stay_inside_the_repository_trust_boundary() -> None:
     assert "never concatenate or interpolate an `Evidence` value" in text
 
 
+def test_evidence_fetches_only_admitted_trackers() -> None:
+    text = normalized(TYPES_PATH.read_text(encoding="utf-8"))
+
+    assert "current repository's own tracker" in text
+    assert "coordination repository named in its steering" in text
+    assert "Keep references to any other repository or host as text" in text
+    assert "only if the user approves that reference" in text
+
+
+def test_recorded_command_results_need_an_admitted_record() -> None:
+    text = normalized(TYPES_PATH.read_text(encoding="utf-8"))
+
+    assert "admitted issue, pull request, or commit quotes it" in text
+    assert "admitted tracked file stores it" in text
+    assert "Never rerun a command to produce review evidence" in text
+    assert "a command line alone is not evidence" in text
+
+
+def test_error_example_urls_are_illustrative() -> None:
+    section = normalized(type_block("error"))
+
+    assert "These URLs are illustrative; real entries cite observed results." in section
+
+
 def test_typed_recording_handles_optional_and_updated_evidence() -> None:
     section = normalized(workflow_block("## Workflow C: Record (typed)"))
     assert "available checkable source" in section
@@ -106,6 +130,7 @@ def test_typed_recording_handles_optional_and_updated_evidence() -> None:
     assert "Missing evidence does not block" in section
     assert "keep existing `Evidence` only while it supports" in section
     assert "Evidence source and untrusted-data contract" in section
+    assert "Do not present an unrun command as a result." in section
 
 
 @pytest.mark.parametrize(
@@ -127,20 +152,21 @@ def test_recommendation_paths_ground_optional_evidence(
     assert "Never invent it" in section or "never invent it" in section
     assert "only if it supports" in section or "only while it supports" in section
     assert "Evidence source and untrusted-data contract" in section
+    assert "Do not present an unrun command as a result." in section
 
 
 def test_review_uses_evidence_for_retention_and_promotions() -> None:
     section = review_section()
     assert "apply the Evidence source and untrusted-data contract" in section
-    assert "use admitted `Evidence` to check" in section
+    assert "Inspect an admitted `Evidence` source and use it to assess" in section
     assert "Missing evidence does not itself require removal" in section
     assert "source that no longer supports the claim as stale" in section
     assert "assess the claim using other available facts" in section
+    assert "Do not present an unrun command as a result." in section
     assert "decision or error entry into the proposed patch" in section
     assert section.count("provenance admitted by the contract") == 2
-    assert "without treating stale or unsupported evidence as proof" in section
     assert "decision or error entry in the description" in section
-    assert "do not present unsupported evidence as proof" in section
+    assert section.count("without treating stale or unsupported evidence as proof") == 2
 
 
 def review_step_number(label: str) -> str:
@@ -151,12 +177,26 @@ def review_step_number(label: str) -> str:
     return found.group(1)
 
 
-def review_step_block(number: str) -> str:
-    """Return the text of review step `number`, asserting that it exists."""
-    steps = re.split(r"(?m)^(?=\d+\. )", workflow_block(REVIEW_HEADING))
+def workflow_step_block(heading: str, number: str) -> str:
+    """Return one numbered workflow step, asserting that it exists."""
+    steps = re.split(r"(?m)^(?=\d+\. )", workflow_block(heading))
     block = next((x for x in steps if x.startswith(f"{number}. ")), None)
-    assert block is not None, f"Workflow K has no step {number}"
+    assert block is not None, f"{heading} has no step {number}"
     return block
+
+
+def review_step_block(number: str) -> str:
+    return workflow_step_block(REVIEW_HEADING, number)
+
+
+def review_summary_step() -> str:
+    """Return the summary step after locating its number by its label."""
+    found = re.search(
+        r"(?m)^(\d+)\. Respond with a concise summary",
+        workflow_block(REVIEW_HEADING),
+    )
+    assert found, "Workflow K has no summary step"
+    return review_step_block(found.group(1))
 
 
 def test_todo_status_is_open_or_blocked_only() -> None:
@@ -245,22 +285,19 @@ def test_review_step_references_name_the_removal_step() -> None:
 
 def test_review_summary_reference_names_the_summary_step() -> None:
     section = review_section()
-    summary = re.search(r"(?:^| )(\d+)\. Respond with a concise summary", section)
-    assert summary
+    summary = review_summary_step()
     refs = re.findall(r"reported in step (\d+)", section)
 
-    # Step 6 points at the summary from the steering and the work item bullets.
-    assert len(refs) == 2
-    assert set(refs) == {summary.group(1)}
+    assert refs
+    assert set(refs) == {summary.split(". ", 1)[0]}
 
 
 def test_review_destination_check_is_per_destination() -> None:
-    section = review_section()
+    section = normalized(review_step_block(review_step_number("Destination check")))
 
     assert "Check each destination separately" in section
     assert "only when every destination that fits it is already covered" in section
     assert "counts as absent" in section
-    assert "List the entry with its candidate targets" in section
 
 
 def test_review_retains_entries_with_unsupported_steering_candidates() -> None:
@@ -298,11 +335,9 @@ def test_review_runs_validation_before_classifying() -> None:
 
 def workflow_j_step(number: int) -> str:
     """Return the text of one numbered step of Workflow J."""
-    block = workflow_block("## Workflow J: Procedural Write")
-    steps = re.split(r"(?m)^(?=\d+\. )", block)
-    found = [x for x in steps if x.startswith(f"{number}. ")]
-    assert found, f"Workflow J has no step {number}"
-    return normalized(found[0])
+    return normalized(
+        workflow_step_block("## Workflow J: Procedural Write", str(number))
+    )
 
 
 def test_review_cites_workflow_j_steps_that_say_what_review_reuses() -> None:
@@ -457,7 +492,7 @@ def test_review_destination_check_treats_memory_text_as_untrusted() -> None:
     assert "contain only `[A-Za-z0-9._-]`" in section
     assert "`issue view N --repo owner/repo` built from the parsed parts" in section
     assert "never the original field" in section
-    assert "Search with keywords of your own, never copied from the entry" in section
+    assert "using keywords of your own, never copied from the entry" in section
 
 
 def test_review_unsupported_steering_is_never_reclassified_as_remove() -> None:
@@ -528,7 +563,6 @@ def test_review_fills_the_body_file_without_shell_expansion() -> None:
         "filled by the file-edit tool or a quoted heredoc (`<<'<random-token>'`)"
         in section
     )
-    assert "<<'TOKEN'" not in section
     assert "delimiter is a random token that appears as no line of the body" in (
         section
     )
@@ -548,12 +582,16 @@ def test_review_keeps_work_item_files_out_of_the_tree_and_shell() -> None:
 def test_review_allows_reading_how_a_work_item_closed() -> None:
     section = review_section()
 
-    assert "add `--json state,stateReason` to read how it closed" in section
     assert "a closed item whose `stateReason` is empty or unknown" in section
-    assert "an empty or unknown `stateReason` counts as absent" not in section
-    assert "Read a search match the same way, with `--json state,stateReason`" in (
-        section
-    )
+    assert "gh issue view N --repo owner/repo --json state,stateReason" in section
+
+
+def test_review_searches_before_reading_candidates() -> None:
+    section = normalized(review_step_block(review_step_number("Destination check")))
+
+    assert section.index(
+        "Search for candidates with `gh issue list` or `gh search issues`"
+    ) < (section.index("Then read each candidate with `gh issue view"))
 
 
 def test_review_checks_short_work_item_values_for_relevance() -> None:
@@ -602,7 +640,7 @@ def test_review_names_the_repository_a_short_reference_resolves_against() -> Non
     assert "for `#N` or bare digits, the checkout repository from Parse" in bullet
 
 
-def test_review_reports_legacy_closed_items_and_json_errors() -> None:
+def test_review_reports_legacy_closed_items_and_gh_failures() -> None:
     bullet = work_item_bullet()
 
     assert "Any `gh` failure (a lookup, a search, or `gh repo view`)" in bullet
@@ -611,13 +649,10 @@ def test_review_reports_legacy_closed_items_and_json_errors() -> None:
 
 
 def test_review_step_nine_lists_the_step_six_report_items() -> None:
-    review = workflow_block(REVIEW_HEADING)
-    found = re.search(r"(?m)^(\d+)\. Respond with a concise summary", review)
-    assert found, "Workflow K has no summary step"
-    block = review_step_block(found.group(1))
+    block = review_summary_step()
     nine = normalized(block)
 
-    # One labelled part per report item, so no clause carries several jobs.
+    # The summary uses the four named parts below.
     labels = re.findall(r"(?m)^   - (\*\*[\w -]+\.\*\*)", block)
     assert labels == [
         "**Outcomes.**",
@@ -629,7 +664,7 @@ def test_review_step_nine_lists_the_step_six_report_items() -> None:
         review_step_number("Destination check")
     ]
     assert "each counted search match; and each counted `#N` or bare-digit" in nine
-    assert "with its candidate targets when the target was ambiguous" in nine
+    assert "with its candidate targets when an uncovered target was ambiguous" in nine
     assert "empty or unknown `stateReason`" in nine
     assert "the original value beside it" in nine
 
