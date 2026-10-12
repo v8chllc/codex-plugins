@@ -555,10 +555,13 @@ def test_advisory_comment_and_signal_payload_share_report_and_reviewed_sha(
     if latent:
         report += "\n\n### Latent Findings\n\n#### [F-9] [LOW] Latent risk\n"
     findings = contract.open_findings(report)
-    assert contract.score_findings(
-        contract.Finding(item["id"], item["section"], item["severity"])
-        for item in findings
-    ) == score
+    assert (
+        contract.score_findings(
+            contract.Finding(item["id"], item["section"], item["severity"])
+            for item in findings
+        )
+        == score
+    )
     assert contract.advisory_completion(score, "passing", findings)
     reviewed_sha = "a123456"
     body = module.build_comment_body(

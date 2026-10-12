@@ -140,7 +140,9 @@ def test_advisory_completion_follows_successful_post_and_precedes_fixer() -> Non
     assert workflow.index("advisory_completion(score, status, findings)") < (
         workflow.index("run `references/fix-workflow.md`")
     )
-    assert "A posted `passing` review for which `advisory_completion` is true" in workflow
+    assert (
+        "A posted `passing` review for which `advisory_completion` is true" in workflow
+    )
     assert "exact reviewed SHA" in workflow
 
 
