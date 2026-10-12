@@ -101,22 +101,17 @@ record the pushed commit SHAs.
 
 ### 6. Hand back to the review budget
 
-Keep two result fields with distinct, exhaustive vocabularies:
+Keep two result fields with distinct, exhaustive vocabularies. Evaluate the
+rows from top to bottom; the first matching row wins:
 
 | Fixer result | Workflow condition | Workflow outcome |
 | --- | --- | --- |
 | `MUTATION_UNPROVEN` | any | `BLOCKERS_REMAIN` |
 | `QUALITY_FAILURES` | any | `QUALITY_FAILURES` |
 | `COMPLETE` | a finding has no disposition | `BLOCKERS_REMAIN` |
-| `COMPLETE` | `partial`; changes committed and pushed | `BLOCKERS_REMAIN` |
-| `COMPLETE` | `partial`; no files changed | `BLOCKERS_REMAIN` |
-| `COMPLETE` | `work-item-required`; changes committed and pushed | `BLOCKERS_REMAIN` |
-| `COMPLETE` | `work-item-required`; no files changed | `BLOCKERS_REMAIN` |
+| `COMPLETE` | a finding is `partial` or `work-item-required` | `BLOCKERS_REMAIN` |
 | `COMPLETE` | no unresolved dispositions; changes committed and pushed | `COMPLETE` |
 | `COMPLETE` | no unresolved dispositions; no files changed | `NO_CHANGE` |
-
-Apply the `partial`, `work-item-required`, and missing-disposition rows before
-evaluating whether changes were committed or no files changed.
 
 Return `fixer_result` using only `COMPLETE`, `MUTATION_UNPROVEN`, or
 `QUALITY_FAILURES`. Return `workflow_outcome` using only `COMPLETE`,
