@@ -9,6 +9,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = REPO_ROOT / "plugins/v8ch/skills/consensus-review/scripts"
 FIXTURES_DIR = REPO_ROOT / "tests/fixtures/consensus-review"
+SKILL_FILE = REPO_ROOT / "plugins/v8ch/skills/consensus-review/SKILL.md"
+POSTER_AGENT = (
+    REPO_ROOT / "plugins/v8ch/skills/consensus-review/agents/consensus-review-poster.md"
+)
 
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -34,42 +38,6 @@ def build_findings(raw: list[dict[str, Any]]) -> list[contract.Finding]:
         )
         for entry in raw
     ]
-
-
-def build_report(
-    severities: list[str], *, section: str = "Should Fix", latent: bool = False
-) -> str:
-    finding_lines = "\n\n".join(
-        f"#### [F-{number}] [{severity}] Finding {number}"
-        for number, severity in enumerate(severities, 1)
-    )
-    latent_line = ""
-    if latent:
-        number = len(severities) + 1
-        latent_line = f"#### [F-{number}] [LOW] Latent risk"
-    section_name = section.lower().replace(" ", "-")
-    scored = [
-        contract.Finding(f"F-{number}", section_name, severity)
-        for number, severity in enumerate(severities, 1)
-    ]
-    if latent:
-        scored.append(
-            contract.Finding(f"F-{len(severities) + 1}", contract.LATENT, "LOW")
-        )
-    score = contract.score_findings(scored)
-    status = contract.review_status(score, scored)
-    contents = {
-        "Must Fix": finding_lines if section == "Must Fix" else "None.",
-        "Should Fix": finding_lines if section == "Should Fix" else "None.",
-        "Latent Findings": latent_line or "None.",
-    }
-    return (
-        f"### Quality Score: {score}/100 — {contract.status_label(status)}\n\n"
-        "### Evidence\n\nchecked\n\n"
-        f"### Must Fix\n\n{contents['Must Fix']}\n\n"
-        f"### Should Fix\n\n{contents['Should Fix']}\n\n"
-        f"### Latent Findings\n\n{contents['Latent Findings']}\n"
-    )
 
 
 def metadata_case(case: dict[str, Any]) -> dict[str, Any]:
@@ -150,218 +118,6 @@ def test_status_labels() -> None:
     assert contract.status_label("failing") == "Failing"
     with pytest.raises(contract.ContractError):
         contract.status_label("unknown")
-
-
-@pytest.mark.parametrize(
-    ("severities", "cycle", "expected_score", "expected_advisory"),
-    [
-        (["LOW", "LOW"], 1, 96, True),
-        (["MEDIUM"], 1, 95, True),
-        (["LOW", "LOW", "LOW"], 1, 94, False),
-        (["LOW", "LOW"], 7, 96, True),
-    ],
-)
-def test_advisory_threshold_and_later_cycle(
-    severities: list[str], cycle: int, expected_score: int, expected_advisory: bool
-) -> None:
-    result = contract.parse_report_contract(build_report(severities))
-    assert result.score == expected_score
-    assert result.status == "passing"
-    assert result.advisory_completion is expected_advisory
-    assert [finding["id"] for finding in result.open_findings] == [
-        f"F-{number}" for number in range(1, len(severities) + 1)
-    ]
-    assert cycle >= 1
-
-
-def test_advisory_findings_keep_report_order_and_include_latent() -> None:
-    report = """### Must Fix
-
-None.
-
-### Should Fix
-
-#### [F-1] [LOW] First finding
-
-#### [F-2] [LOW] Second finding
-
-### Latent Findings
-
-#### [F-3] [LOW] Latent finding
-
-### Plan Notes
-
-#### [P-1] Plan divergence
-"""
-    findings = contract.open_findings(report)
-    assert findings == [
-        {
-            "id": "F-1",
-            "severity": "LOW",
-            "section": "should-fix",
-            "title": "First finding",
-        },
-        {
-            "id": "F-2",
-            "severity": "LOW",
-            "section": "should-fix",
-            "title": "Second finding",
-        },
-        {
-            "id": "F-3",
-            "severity": "LOW",
-            "section": "latent",
-            "title": "Latent finding",
-        },
-    ]
-    result = contract.parse_report_contract(build_report(["LOW"], latent=True))
-    assert result.advisory_completion
-    assert result.completion_kind == contract.COMPLETION_ADVISORY
-
-
-def test_must_fix_and_clean_review_cannot_use_advisory_completion() -> None:
-    must_fix = contract.parse_report_contract(build_report(["LOW"], section="Must Fix"))
-    clean = contract.parse_report_contract(build_report([]))
-    latent = contract.parse_report_contract(build_report([], latent=True))
-    assert not must_fix.advisory_completion
-    assert not clean.advisory_completion
-    assert not latent.advisory_completion
-
-
-@pytest.mark.parametrize("indent", ["", " ", "  ", "   "])
-def test_report_parser_ignores_headings_inside_fences(indent: str) -> None:
-    report = build_report(["MEDIUM"]) + (
-        f"\n{indent}```markdown\n### Must Fix\n\n"
-        f"#### [F-99] [CRITICAL] Example only\n{indent}```\n"
-    )
-    result = contract.parse_report_contract(report)
-    assert [finding["id"] for finding in result.open_findings] == ["F-1"]
-
-
-def test_fence_closing_suffix_does_not_expose_fenced_headings() -> None:
-    report = build_report(["MEDIUM"]) + (
-        "\n```markdown\n```not-a-close\n### Must Fix\n"
-        "#### [F-99] [CRITICAL] Example only\n```\n"
-    )
-    result = contract.parse_report_contract(report)
-    assert [finding["id"] for finding in result.open_findings] == ["F-1"]
-
-
-@pytest.mark.parametrize(
-    "replacement",
-    [
-        "#### [F-1] [BLOCKER] Finding 1",
-        "#### [F-2] [MEDIUM] Finding 1",
-        "#### [F-1] [MEDIUM] Finding 1\n\n#### [F-1] [LOW] Duplicate",
-    ],
-)
-def test_report_parser_rejects_malformed_or_unordered_findings(
-    replacement: str,
-) -> None:
-    report = build_report(["MEDIUM"]).replace(
-        "#### [F-1] [MEDIUM] Finding 1", replacement
-    )
-    with pytest.raises(contract.ContractError):
-        contract.parse_report_contract(report)
-
-
-def test_report_contract_recomputes_score_and_rejects_contradictions() -> None:
-    report = build_report(["MEDIUM"]).replace("95/100", "96/100")
-    with pytest.raises(contract.ContractError, match="computed score"):
-        contract.parse_report_contract(report)
-
-
-def test_report_contract_rejects_multiple_quality_headings() -> None:
-    report = build_report(["MEDIUM"]) + "\n### Quality Score: 95/100 — Passing\n"
-    with pytest.raises(contract.ContractError, match="exactly one"):
-        contract.parse_report_contract(report)
-
-
-def test_report_contract_rejects_unclosed_fences_and_reordered_sections() -> None:
-    with pytest.raises(contract.ContractError, match="unclosed"):
-        contract.parse_report_contract(build_report(["MEDIUM"]) + "\n```markdown\n")
-    report = build_report(["MEDIUM"])
-    must_fix = "### Must Fix\n\nNone."
-    should_fix = "### Should Fix\n\n#### [F-1] [MEDIUM] Finding 1"
-    reordered = report.replace(
-        f"{must_fix}\n\n{should_fix}", f"{should_fix}\n\n{must_fix}"
-    )
-    with pytest.raises(contract.ContractError, match="exactly once"):
-        contract.parse_report_contract(reordered)
-
-
-def test_report_contract_requires_top_level_evidence() -> None:
-    report = build_report(["MEDIUM"]).replace(
-        "### Evidence\n\nchecked", "```markdown\n### Evidence\n```"
-    )
-    with pytest.raises(contract.ContractError, match="Evidence"):
-        contract.parse_report_contract(report)
-
-
-def test_completion_kind_is_semantic_routing_state() -> None:
-    assert contract.parse_report_contract(build_report([])).completion_kind == "clean"
-    assert (
-        contract.parse_report_contract(build_report(["MEDIUM"])).completion_kind
-        == "advisory"
-    )
-    assert (
-        contract.parse_report_contract(
-            build_report(["HIGH"], section="Must Fix")
-        ).completion_kind
-        == "fix-required"
-    )
-
-
-def test_report_contract_cli_prints_authoritative_json(tmp_path: Path) -> None:
-    report_path = tmp_path / "review.md"
-    report_path.write_text(build_report(["MEDIUM"]), encoding="utf-8")
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPTS_DIR / "review_contract.py"),
-            "--report-file",
-            str(report_path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0
-    assert json.loads(result.stdout) == {
-        "advisory_completion": True,
-        "completion_kind": "advisory",
-        "open_findings": [
-            {
-                "id": "F-1",
-                "section": "should-fix",
-                "severity": "MEDIUM",
-                "title": "Finding 1",
-            }
-        ],
-        "score": 95,
-        "status": "passing",
-    }
-
-
-def test_report_contract_cli_rejects_an_invalid_report(
-    tmp_path: Path,
-) -> None:
-    report_path = tmp_path / "invalid-review.md"
-    report_path.write_text("### Evidence\n", encoding="utf-8")
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPTS_DIR / "review_contract.py"),
-            "--report-file",
-            str(report_path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert result.stderr.startswith("Error:")
 
 
 def test_valid_metadata_fixture_passes_validation() -> None:
@@ -492,6 +248,637 @@ def test_an_absolute_or_home_plan_path_is_refused(value: str) -> None:
     """plan_source is published twice and read without this checkout."""
     with pytest.raises(contract.ContractError, match="absolute or"):
         contract.validate_plan_source(value)
+
+
+@pytest.mark.parametrize(
+    ("severities", "expected_score", "expected_advisory"),
+    [
+        (["LOW", "LOW"], 96, True),
+        (["MEDIUM"], 95, True),
+        (["LOW", "LOW", "LOW"], 94, False),
+        ([], 100, False),
+    ],
+)
+def test_advisory_boundary_and_clean_review(
+    severities: list[str], expected_score: int, expected_advisory: bool
+) -> None:
+    findings = [
+        contract.Finding(f"F-{index}", contract.SHOULD_FIX, severity)
+        for index, severity in enumerate(severities, start=1)
+    ]
+    score = contract.score_findings(findings)
+    status = contract.review_status(score, findings)
+    report = "\n".join(
+        ["### Must Fix", "None.", "### Should Fix"]
+        + [
+            f"#### [F-{index}] [{severity}] Finding {index}"
+            for index, severity in enumerate(severities, start=1)
+        ]
+        + ["### Latent Findings", "None."]
+    )
+    assert score == expected_score
+    assert (
+        contract.advisory_completion(score, status, contract.open_findings(report))
+        is expected_advisory
+    )
+
+
+def test_open_findings_preserve_report_order_including_latent() -> None:
+    report = """### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [MEDIUM] First current finding
+
+#### [F-2] [LOW] Second current finding
+
+### Latent Findings
+
+#### [F-3] [HIGH] Future failure
+
+### Plan Notes
+
+#### This is a plan note
+
+### Score Breakdown
+
+| [F-5] LOW | -2 |
+"""
+    findings = contract.open_findings(report)
+    assert findings == [
+        {
+            "id": "F-1",
+            "severity": "MEDIUM",
+            "section": contract.SHOULD_FIX,
+            "title": "First current finding",
+        },
+        {
+            "id": "F-2",
+            "severity": "LOW",
+            "section": contract.SHOULD_FIX,
+            "title": "Second current finding",
+        },
+        {
+            "id": "F-3",
+            "severity": "HIGH",
+            "section": contract.LATENT,
+            "title": "Future failure",
+        },
+    ]
+    assert contract.advisory_completion(95, "passing", findings)
+
+
+def test_advisory_rejects_open_must_fix_even_at_95() -> None:
+    report = (
+        "### Must Fix\n\n#### [F-1] [LOW] Blocking finding\n\n"
+        "### Should Fix\n\nNone.\n\n### Latent Findings\n\nNone.\n"
+    )
+    assert not contract.advisory_completion(
+        98, "passing", contract.open_findings(report)
+    )
+
+
+@pytest.mark.parametrize(
+    ("score", "heading", "finding_headings", "cycle"),
+    [
+        (96, "96/100 — Passing", ["[F-1] [LOW] First", "[F-2] [LOW] Second"], 1),
+        (95, "95/100 — Passing", ["[F-1] [MEDIUM] One"], 7),
+    ],
+)
+def test_advisory_outcome_builds_exact_later_cycle_terminal_payload(
+    score: int, heading: str, finding_headings: list[str], cycle: int
+) -> None:
+    report = "\n".join(
+        [
+            f"### Quality Score: {heading}",
+            "",
+            "### Evidence",
+            "",
+            "### Must Fix",
+            "",
+            "None.",
+            "",
+            "### Should Fix",
+            "",
+            *[f"#### {finding}" for finding in finding_headings],
+            "",
+            "### Latent Findings",
+            "",
+            "None.",
+        ]
+    )
+    outcome = contract.resolve_review_outcome(
+        report, score=score, status="passing", reviewed_sha="abc1234"
+    )
+    signal = contract.completion_signal(
+        outcome,
+        cycle=cycle,
+        review_url="https://example.test/review/1",
+        post_succeeded=True,
+    )
+    assert signal == {
+        "signal": "REVIEW_COMPLETE_WITH_FINDINGS",
+        "cycle": cycle,
+        "details": {
+            "score": score,
+            "status": "passing",
+            "review_url": "https://example.test/review/1",
+            "reviewed_sha": "abc1234",
+            "open_findings": [
+                *[
+                    {
+                        "id": heading.split("]", 1)[0][1:],
+                        "severity": heading.split("[", 2)[2].split("]", 1)[0],
+                        "section": contract.SHOULD_FIX,
+                        "title": heading.split("] ", 2)[2],
+                    }
+                    for heading in finding_headings
+                ],
+            ],
+        },
+    }
+
+
+def test_failed_post_aborts_before_advisory_completion() -> None:
+    report = """### Quality Score: 95/100 — Passing
+
+### Evidence
+
+### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [MEDIUM] One finding
+
+### Latent Findings
+
+None.
+"""
+    outcome = contract.resolve_review_outcome(
+        report, score=95, status="passing", reviewed_sha="abc1234"
+    )
+    assert contract.completion_signal(
+        outcome,
+        cycle=4,
+        review_url=None,
+        post_succeeded=False,
+    ) == {
+        "signal": "ABORT",
+        "cycle": 4,
+        "details": {
+            "reason": "post_failed",
+            "message": "The review comment was not posted.",
+            "score": 95,
+            "review_url": None,
+        },
+    }
+
+
+def test_resolve_and_signal_command_boundaries_preserve_the_reviewed_sha(
+    tmp_path: Path,
+) -> None:
+    report_file = tmp_path / "report.md"
+    outcome_file = tmp_path / "outcome.json"
+    signal_file = tmp_path / "signal.json"
+    report_file.write_text(
+        """### Quality Score: 95/100 — Passing
+
+### Evidence
+
+### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [MEDIUM] One finding
+
+### Latent Findings
+
+None.
+""",
+        encoding="utf-8",
+    )
+    script = SCRIPTS_DIR / "review_contract.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "resolve",
+            "--report-file",
+            str(report_file),
+            "--score",
+            "95",
+            "--status",
+            "passing",
+            "--reviewed-sha",
+            "abc1234",
+            "--output",
+            str(outcome_file),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "signal",
+            "--outcome-file",
+            str(outcome_file),
+            "--cycle",
+            "8",
+            "--review-url",
+            "https://example.test/review/8",
+            "--output",
+            str(signal_file),
+        ],
+        check=True,
+    )
+
+    outcome = json.loads(outcome_file.read_text(encoding="utf-8"))
+    signal = json.loads(signal_file.read_text(encoding="utf-8"))
+    assert outcome["reviewed_sha"] == "abc1234"
+    assert signal["details"]["reviewed_sha"] == outcome["reviewed_sha"]
+
+
+def test_resolve_command_rejects_an_invalid_report_without_an_artifact(
+    tmp_path: Path,
+) -> None:
+    report_file = tmp_path / "invalid-report.md"
+    output_file = tmp_path / "outcome.json"
+    report_file.write_text("### Evidence\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "review_contract.py"),
+            "resolve",
+            "--report-file",
+            str(report_file),
+            "--score",
+            "95",
+            "--status",
+            "passing",
+            "--reviewed-sha",
+            "abc1234",
+            "--output",
+            str(output_file),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "exactly one Quality Score heading" in result.stderr
+    assert not output_file.exists()
+
+
+@pytest.mark.parametrize(
+    "outcome_text", [None, "{not json\n"], ids=["missing", "malformed"]
+)
+def test_signal_command_rejects_an_unreadable_outcome_without_an_artifact(
+    tmp_path: Path, outcome_text: str | None
+) -> None:
+    outcome_file = tmp_path / "outcome.json"
+    output_file = tmp_path / "signal.json"
+    if outcome_text is not None:
+        outcome_file.write_text(outcome_text, encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "review_contract.py"),
+            "signal",
+            "--outcome-file",
+            str(outcome_file),
+            "--cycle",
+            "3",
+            "--review-url",
+            "https://example.test/review/3",
+            "--output",
+            str(output_file),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "Error: Failed to read resolved outcome" in result.stderr
+    assert not output_file.exists()
+
+
+def test_resolve_command_rejects_an_unwritable_output(tmp_path: Path) -> None:
+    report_file = tmp_path / "report.md"
+    output_directory = tmp_path / "outcome.json"
+    report_file.write_text(
+        """### Quality Score: 95/100 — Passing
+
+### Evidence
+
+### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [MEDIUM] One finding
+
+### Latent Findings
+
+None.
+""",
+        encoding="utf-8",
+    )
+    output_directory.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "review_contract.py"),
+            "resolve",
+            "--report-file",
+            str(report_file),
+            "--score",
+            "95",
+            "--status",
+            "passing",
+            "--reviewed-sha",
+            "abc1234",
+            "--output",
+            str(output_directory),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "Error:" in result.stderr
+    assert output_directory.is_dir()
+
+
+def test_signal_command_has_no_independent_reviewed_sha_input() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "review_contract.py"), "signal", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    signal_help = result.stdout
+    assert "--reviewed-sha" not in signal_help
+
+
+@pytest.mark.parametrize(
+    ("severities", "score", "cycle", "post_failed", "expected_signal"),
+    [
+        (["LOW", "LOW"], 96, 1, False, "REVIEW_COMPLETE_WITH_FINDINGS"),
+        (["MEDIUM"], 95, 7, False, "REVIEW_COMPLETE_WITH_FINDINGS"),
+        (["LOW", "LOW", "LOW"], 94, 3, False, None),
+        (["MEDIUM"], 95, 8, True, "ABORT"),
+    ],
+)
+def test_outcome_commands_route_the_exact_posted_review(
+    tmp_path: Path,
+    severities: list[str],
+    score: int,
+    cycle: int,
+    post_failed: bool,
+    expected_signal: str | None,
+) -> None:
+    report_file = tmp_path / "report.md"
+    outcome_file = tmp_path / "outcome.json"
+    signal_file = tmp_path / "signal.json"
+    findings = [
+        f"#### [F-{index}] [{severity}] Finding {index}"
+        for index, severity in enumerate(severities, start=1)
+    ]
+    report_file.write_text(
+        "\n".join(
+            [
+                f"### Quality Score: {score}/100 — Passing",
+                "### Evidence",
+                "### Must Fix",
+                "None.",
+                "### Should Fix",
+                *findings,
+                "### Latent Findings",
+                "None.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script = SCRIPTS_DIR / "review_contract.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "resolve",
+            "--report-file",
+            str(report_file),
+            "--score",
+            str(score),
+            "--status",
+            "passing",
+            "--reviewed-sha",
+            "abc1234",
+            "--output",
+            str(outcome_file),
+        ],
+        check=True,
+    )
+    signal_command = [
+        sys.executable,
+        str(script),
+        "signal",
+        "--outcome-file",
+        str(outcome_file),
+        "--cycle",
+        str(cycle),
+        "--output",
+        str(signal_file),
+    ]
+    if post_failed:
+        signal_command.append("--post-failed")
+    else:
+        signal_command.extend(["--review-url", "https://example.test/review/7"])
+    subprocess.run(signal_command, check=True)
+    outcome = json.loads(outcome_file.read_text(encoding="utf-8"))
+    signal = json.loads(signal_file.read_text(encoding="utf-8"))
+    assert outcome["reviewed_sha"] == "abc1234"
+    assert [finding["id"] for finding in outcome["findings"]] == [
+        f"F-{number}" for number in range(1, len(severities) + 1)
+    ]
+    if expected_signal is None:
+        assert signal is None
+        return
+    assert signal["signal"] == expected_signal
+    assert signal["cycle"] == cycle
+    assert signal["details"]["score"] == score
+    if post_failed:
+        assert signal["details"]["reason"] == "post_failed"
+        assert signal["details"]["review_url"] is None
+    else:
+        assert signal["details"]["status"] == "passing"
+        assert signal["details"]["review_url"] == "https://example.test/review/7"
+        assert signal["details"]["reviewed_sha"] == outcome["reviewed_sha"]
+        assert signal["details"]["open_findings"] == outcome["findings"]
+
+
+def test_report_parser_ignores_fenced_findings_but_rejects_forged_score() -> None:
+    report = """### Quality Score: 95/100 — Passing
+
+### Evidence
+
+### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [MEDIUM] Actual finding
+
+### Latent Findings
+
+None.
+
+```markdown
+#### [F-2] [HIGH] Example only
+```
+"""
+    outcome = contract.resolve_review_outcome(
+        report, score=95, status="passing", reviewed_sha="abc1234"
+    )
+    assert [finding["id"] for finding in outcome.findings] == ["F-1"]
+    with pytest.raises(contract.ContractError, match="deductions"):
+        contract.resolve_review_outcome(
+            report.replace("95/100", "96/100"),
+            score=96,
+            status="passing",
+            reviewed_sha="abc1234",
+        )
+
+
+def test_advisory_payload_includes_accompanying_latent_finding() -> None:
+    report = """### Quality Score: 96/100 — Passing
+
+### Evidence
+
+### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [LOW] Current finding
+
+### Latent Findings
+
+#### [F-2] [LOW] Latent companion
+"""
+    outcome = contract.resolve_review_outcome(
+        report, score=96, status="passing", reviewed_sha="abc1234"
+    )
+    signal = contract.completion_signal(
+        outcome,
+        cycle=9,
+        review_url="https://example.test/review/9",
+        post_succeeded=True,
+    )
+    assert signal is not None
+    assert [finding["section"] for finding in signal["details"]["open_findings"]] == [
+        contract.SHOULD_FIX,
+        contract.LATENT,
+    ]
+
+
+def test_report_requires_exact_finding_sections_and_ids() -> None:
+    report = """### Quality Score: 95/100 — Passing
+
+### Evidence
+
+### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [MEDIUM] Current finding
+
+### Latent Findings
+
+None.
+"""
+    with pytest.raises(contract.ContractError, match="Finding sections"):
+        contract.resolve_review_outcome(
+            report.replace("### Latent Findings", "### Future Findings"),
+            score=95,
+            status="passing",
+            reviewed_sha="abc1234",
+        )
+    with pytest.raises(contract.ContractError, match="sequential"):
+        contract.resolve_review_outcome(
+            report.replace("[F-1]", "[F-2]"),
+            score=95,
+            status="passing",
+            reviewed_sha="abc1234",
+        )
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "#### [F-x] [LOW] Bad identifier",
+        "#### [F-1] [INFO] Bad severity",
+        "#### [F-1] Missing severity",
+        "####[F-1] [LOW] Missing heading space",
+    ],
+)
+def test_open_findings_reject_malformed_governed_headings(heading: str) -> None:
+    with pytest.raises(contract.ContractError, match="Malformed finding heading"):
+        contract.open_findings(
+            f"### Must Fix\n\nNone.\n\n### Should Fix\n\n{heading}\n\n"
+            "### Latent Findings\n\nNone.\n"
+        )
+
+
+def test_open_findings_reject_duplicate_ids_across_governed_sections() -> None:
+    report = """### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [LOW] First
+
+### Latent Findings
+
+#### [F-1] [MEDIUM] Duplicate
+"""
+    with pytest.raises(contract.ContractError, match="unique and sequential"):
+        contract.open_findings(report)
+
+
+def test_posted_advisory_branch_precedes_the_fixer() -> None:
+    skill = SKILL_FILE.read_text(encoding="utf-8")
+    assert "Six roles, each a prompt asset" in skill
+    assert "Nothing else in the run is delegated in parallel" in skill
+    branch = skill.split("### 10. Branch on status", 1)[1].split("**Budget:**", 1)[0]
+    assert branch.index("`REVIEW_COMPLETE_WITH_FINDINGS`") < branch.index(
+        "`references/fix-workflow.md`"
+    )
+    assert "Do not invoke the fixer" in branch
+    assert "review_contract.py signal" in branch
+    assert "ordered findings" in branch
+    assert "outcome-file" in branch
+    assert "`post_failed`" in skill
+    assert "`score`, `status`, `review_url`, `reviewed_sha`, `open_findings`" in skill
+
+    poster = POSTER_AGENT.read_text(encoding="utf-8")
+    assert "caller will disposition open findings" in poster
+    assert "--outcome-file" in poster
 
 
 def test_a_repository_relative_plan_path_is_accepted() -> None:

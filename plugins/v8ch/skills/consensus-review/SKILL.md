@@ -184,43 +184,50 @@ and stop without a score.
 **No PR/MR:** return the report unchanged and emit `REVIEW_COMPLETE` with
 `review_url` `null`. A local review never fixes.
 
-**PR/MR:** write the report verbatim to a scratch file and run the executable
-contract once:
+**PR/MR:** write the report verbatim to a scratch file and resolve the outcome
+once through the executable contract:
 
 ```bash
-uv run <skill-dir>/scripts/review_contract.py --report-file <report-path>
+uv run <skill-dir>/scripts/review_contract.py resolve \
+  --report-file <report-path> \
+  --score <synthesizer-score> \
+  --status <synthesizer-status> \
+  --reviewed-sha <exact-step-4-sha> \
+  --output <outcome-path>
 ```
 
-It validates the report, recomputes the score and status, and prints one JSON
-object containing `score`, `status`, ordered `open_findings`,
-`advisory_completion`, and `completion_kind`. A nonzero exit is `ABORT` with
-reason `contract_failed`. Pass that exact JSON object and the report to
-`consensus-review-poster` once with the PR/MR number,
-the cycle, the status, the delegation mode, the plan source, the reviewed SHA,
-the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
-counts, the repository directory, and the absolute skill directory. A posting
-failure is `ABORT` with `reason` `post_failed`.
-
-Keep the returned comment URL and the SHA captured for this review. Carry the
-score, status, `open_findings`, and `advisory_completion` from the same JSON
-contract consumed by the poster. The poster must have succeeded before either
-completion signal is emitted.
+The command validates the report's score, status, and ordered findings. A
+nonzero exit is `ABORT` with reason `contract_failed`; post nothing. Preserve
+the outcome artifact unchanged. Pass it and the report to
+`consensus-review-poster` once with the PR/MR number, cycle, delegation mode,
+plan source, scope basis, blast-radius counts, repository directory, and skill
+directory. Capture the returned comment URL on success.
 
 ### 10. Branch on status
 
-- `clean` — stop and emit `REVIEW_COMPLETE`.
-- A posted review whose parsed contract has `advisory_completion` true — stop and
-  emit `REVIEW_COMPLETE_WITH_FINDINGS`. Include the score, status `passing`,
-  comment URL, exact reviewed SHA, and ordered `open_findings` returned from the
-  same report posted by the poster. The caller dispositions those findings.
-- `passing` or `failing` — run `references/fix-workflow.md`, then review again if
-  the budget allows. That workflow returns an outcome; this skill emits the one
-  terminal signal.
+After the posting attempt, invoke the same contract's terminal-signal command:
+
+```bash
+uv run <skill-dir>/scripts/review_contract.py signal \
+  --outcome-file <outcome-path> \
+  --cycle <cycle> \
+  --review-url <posted-comment-url> \
+  --output <signal-path>
+```
+
+If posting failed, omit `--review-url` and pass `--post-failed`. Emit the JSON
+object from the signal file when it is non-null. A failed post returns `ABORT`.
+A successful `clean` result returns `REVIEW_COMPLETE`; a successful advisory
+result returns `REVIEW_COMPLETE_WITH_FINDINGS` with the exact reviewed SHA and
+ordered findings from the posted report. The caller dispositions those findings.
+Do not invoke the fixer for either completion result. A null signal routes a
+`passing` or `failing` review to `references/fix-workflow.md`, then review again
+if the budget allows.
 
 **Budget:** at most three reviews per invocation, whatever the PR/MR's cycle
 count or which toolchain wrote earlier cycles. Every new invocation gets a fresh
-budget. Cycle numbers accumulate with no cap. When the third review is still not
-`clean`, end on the first matching signal in the fix workflow's precedence list:
+budget. Cycle numbers accumulate with no cap. When the third review is neither
+`clean` nor advisory, end on the first matching signal in the fix workflow's precedence list:
 unresolved findings give `BLOCKERS_REMAIN`, a pushed third-cycle fix gives
 `PUSH_COMPLETE`, and a third review that produced no commit gives
 `MAX_REVIEWS_REACHED`. Without that order one run could end on either signal.

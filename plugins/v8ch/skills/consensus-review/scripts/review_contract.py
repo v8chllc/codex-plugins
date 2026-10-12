@@ -28,7 +28,18 @@ from typing import Any
 SCHEMA_VERSION = 2
 COMMENT_MARKER = "consensus-review"
 COMMENT_TYPE = "review"
-EVIDENCE_HEADING = "### Evidence"
+OUTCOME_SCHEMA_VERSION = 1
+OUTCOME_KEYS = frozenset(
+    {
+        "schema_version",
+        "score",
+        "status",
+        "reviewed_sha",
+        "findings",
+        "advisory",
+        "summary",
+    }
+)
 
 SEVERITIES: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 SEVERITY_DEDUCTIONS: dict[str, int] = {
@@ -61,15 +72,6 @@ STATUS_LABELS: dict[str, str] = {
     STATUS_FAILING: "Failing",
 }
 
-COMPLETION_ADVISORY = "advisory"
-COMPLETION_CLEAN = "clean"
-COMPLETION_FIX_REQUIRED = "fix-required"
-COMPLETION_KINDS: tuple[str, ...] = (
-    COMPLETION_ADVISORY,
-    COMPLETION_CLEAN,
-    COMPLETION_FIX_REQUIRED,
-)
-
 DELEGATION_MODES: tuple[str, ...] = ("parallel-subagents", "sequential-fallback")
 
 NO_PLAN_SOURCE = "none"
@@ -99,9 +101,10 @@ COUNT_KEYS: tuple[str, ...] = ("files_touched", "findings_opened", "findings_clo
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
-QUALITY_SCORE_RE = re.compile(
+QUALITY_HEADING_RE = re.compile(
     r"^### Quality Score:\s*(\d+)/100 — (Fully Clean|Passing|Failing)$"
 )
+EVIDENCE_HEADING = "### Evidence"
 FINDING_HEADING_RE = re.compile(
     r"^#### \[(F-\d+)\] \[(CRITICAL|HIGH|MEDIUM|LOW)\] (.+)$"
 )
@@ -152,14 +155,15 @@ class Finding:
 
 
 @dataclass(frozen=True)
-class ReportContract:
-    """Authoritative score and routing contract for one report."""
+class ReviewOutcome:
+    """One validated report outcome shared by posting and terminal signaling."""
 
     score: int
     status: str
-    open_findings: tuple[dict[str, str], ...]
-    advisory_completion: bool
-    completion_kind: str
+    reviewed_sha: str
+    findings: tuple[dict[str, str], ...]
+    advisory: bool
+    summary: str
 
 
 def deduction(finding: Finding) -> int:
@@ -204,8 +208,8 @@ def status_label(status: str) -> str:
         raise ContractError(f"Unknown status '{status}'.") from None
 
 
-def _top_level_lines(report_text: str, *, prefix: str | None = None) -> list[str]:
-    """Return lines outside fenced code blocks, optionally filtered by prefix."""
+def _top_level_lines(report_text: str) -> list[str]:
+    """Return lines outside fenced code blocks, rejecting an unclosed fence."""
     lines: list[str] = []
     fence_character: str | None = None
     fence_length = 0
@@ -225,8 +229,7 @@ def _top_level_lines(report_text: str, *, prefix: str | None = None) -> list[str
             fence_character = fence_match.group(1)[0]
             fence_length = len(fence_match.group(1))
             continue
-        if prefix is None or line.startswith(prefix):
-            lines.append(line)
+        lines.append(line)
     if fence_character is not None:
         raise ContractError("The report contains an unclosed fenced code block.")
     return lines
@@ -247,10 +250,10 @@ def open_findings(report_text: str) -> list[dict[str, str]]:
                     )
                 seen_sections.append(section)
             continue
-        if not line.startswith("#### "):
+        if not line.startswith("####"):
             continue
         match = FINDING_HEADING_RE.match(line)
-        looks_like_finding = line.startswith("#### [F")
+        looks_like_finding = line.startswith(("#### [F", "####[F"))
         if section is None:
             if looks_like_finding:
                 raise ContractError(
@@ -277,30 +280,61 @@ def open_findings(report_text: str) -> list[dict[str, str]]:
             + "."
         )
     identifiers = [finding["id"] for finding in findings]
-    expected = [f"F-{number}" for number in range(1, len(findings) + 1)]
-    if identifiers != expected:
+    expected_ids = [f"F-{number}" for number in range(1, len(findings) + 1)]
+    if identifiers != expected_ids:
         raise ContractError(
             "Finding IDs must be unique and sequential in report order; expected "
-            f"{expected}, got {identifiers}."
+            f"{expected_ids}, got {identifiers}."
         )
     return findings
 
 
-def parse_report_contract(report_text: str) -> ReportContract:
-    """Validate a report and return its authoritative completion contract."""
+def advisory_completion(
+    score: int, status: str, findings: Iterable[dict[str, str]]
+) -> bool:
+    """Return whether a posted review can hand open findings to its caller."""
+    if score < CLEAN_MIN_SCORE or status != STATUS_PASSING:
+        return False
+    sections = [finding["section"] for finding in findings]
+    return MUST_FIX not in sections and SHOULD_FIX in sections
+
+
+def outcome_summary(score: int, status: str, advisory: bool) -> str:
+    """Return the canonical first summary bullet for a resolved outcome."""
+    if status == STATUS_CLEAN:
+        return f"- Review passed with a score of {score}/100. No fixes are required."
+    if advisory:
+        return (
+            f"- Review passed with a score of {score}/100. "
+            "The caller will disposition the open findings."
+        )
+    if status == STATUS_PASSING:
+        return (
+            f"- Review passed with a score of {score}/100. "
+            "A fix cycle will address the open findings."
+        )
+    return (
+        f"- Review failed with a score of {score}/100. Fixes are required before merge."
+    )
+
+
+def resolve_review_outcome(
+    report_text: str, *, score: int, status: str, reviewed_sha: str
+) -> ReviewOutcome:
+    """Resolve and validate the single outcome consumed across boundaries."""
+    if status not in STATUSES:
+        raise ContractError(
+            f"Unknown status '{status}'; expected one of {', '.join(STATUSES)}."
+        )
+    _require_int(score, key="score", minimum=SCORE_FLOOR, maximum=SCORE_MAX)
+    _require_sha(reviewed_sha, key="reviewed_sha")
+    validate_status_band(status, score)
     lowered = report_text.lower()
     if "<details>" in lowered or "</details>" in lowered:
-        raise ContractError(
-            "The report contains a <details> or </details> tag. The comment wraps "
-            "the report in one <details> element, and recovery cuts at the first "
-            "closing tag, so either one truncates the recovered report."
-        )
+        raise ContractError("The report contains a <details> tag.")
     top_level_lines = _top_level_lines(report_text)
     if EVIDENCE_HEADING not in top_level_lines:
-        raise ContractError(
-            "The report is missing its merged '### Evidence' section; the "
-            "synthesizer did not complete."
-        )
+        raise ContractError("The report is missing its merged '### Evidence' section.")
     quality_headings = [
         line for line in top_level_lines if line.startswith("### Quality Score:")
     ]
@@ -308,88 +342,193 @@ def parse_report_contract(report_text: str) -> ReportContract:
         raise ContractError(
             "The report must contain exactly one Quality Score heading."
         )
-    quality_match = QUALITY_SCORE_RE.fullmatch(quality_headings[0])
-    if not quality_match:
+    heading = QUALITY_HEADING_RE.fullmatch(quality_headings[0])
+    if not heading:
         raise ContractError(
-            "The Quality Score heading must be '### Quality Score: N/100 — "
-            "<Fully Clean | Passing | Failing>'."
+            "The report needs an exact '### Quality Score: N/100 — <label>' heading."
+        )
+    report_score = int(heading.group(1))
+    report_label = heading.group(2)
+    if report_score != score or report_label != status_label(status):
+        raise ContractError(
+            "The report Quality Score heading contradicts the resolved "
+            f"status {status!r} and score {score}."
         )
 
-    findings = open_findings(report_text)
+    findings = tuple(open_findings(report_text))
     scored_findings = [
-        Finding(item["id"], item["section"], item["severity"]) for item in findings
+        Finding(finding["id"], finding["section"], finding["severity"])
+        for finding in findings
     ]
-    score = score_findings(scored_findings)
-    status = review_status(score, scored_findings)
-    heading_score = int(quality_match.group(1))
-    heading_status = {label: candidate for candidate, label in STATUS_LABELS.items()}[
-        quality_match.group(2)
-    ]
-    if heading_score != score:
+    computed_score = score_findings(scored_findings)
+    computed_status = review_status(computed_score, scored_findings)
+    if score != computed_score or status != computed_status:
         raise ContractError(
-            f"The report score {heading_score} contradicts the computed score {score}."
+            "The report score or status contradicts its finding deductions and "
+            "open blockers."
         )
-    if heading_status != status:
-        raise ContractError(
-            f"The report status {heading_status!r} contradicts the computed status "
-            f"{status!r}."
-        )
-
-    sections = [finding["section"] for finding in findings]
-    advisory = (
-        score >= CLEAN_MIN_SCORE
-        and status == STATUS_PASSING
-        and MUST_FIX not in sections
-        and SHOULD_FIX in sections
-    )
-    if advisory:
-        completion_kind = COMPLETION_ADVISORY
-    elif status == STATUS_CLEAN:
-        completion_kind = COMPLETION_CLEAN
-    else:
-        completion_kind = COMPLETION_FIX_REQUIRED
-    return ReportContract(
-        score=score,
-        status=status,
-        open_findings=tuple(findings),
-        advisory_completion=advisory,
-        completion_kind=completion_kind,
-    )
+    advisory = advisory_completion(score, status, findings)
+    summary = outcome_summary(score, status, advisory)
+    return ReviewOutcome(score, status, reviewed_sha, findings, advisory, summary)
 
 
-def report_contract_payload(contract: ReportContract) -> dict[str, object]:
-    """Return the stable JSON payload consumed by the orchestration layer."""
+def serialize_outcome(outcome: ReviewOutcome) -> dict[str, Any]:
+    """Return the stable JSON payload used across orchestration boundaries."""
     return {
-        "advisory_completion": contract.advisory_completion,
-        "completion_kind": contract.completion_kind,
-        "open_findings": list(contract.open_findings),
-        "score": contract.score,
-        "status": contract.status,
+        "schema_version": OUTCOME_SCHEMA_VERSION,
+        "score": outcome.score,
+        "status": outcome.status,
+        "reviewed_sha": outcome.reviewed_sha,
+        "findings": list(outcome.findings),
+        "advisory": outcome.advisory,
+        "summary": outcome.summary,
     }
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the report-contract command-line parser."""
-    parser = argparse.ArgumentParser(
-        description="Validate a consensus-review report and print its contract."
+def deserialize_outcome(payload: object) -> ReviewOutcome:
+    """Validate and reconstruct a resolved outcome artifact."""
+    if not isinstance(payload, dict) or set(payload) != OUTCOME_KEYS:
+        raise ContractError("Resolved outcome has an invalid key set.")
+    if payload["schema_version"] != OUTCOME_SCHEMA_VERSION:
+        raise ContractError(
+            f"Resolved outcome schema must be {OUTCOME_SCHEMA_VERSION}."
+        )
+    score = _require_int(
+        payload["score"], key="score", minimum=SCORE_FLOOR, maximum=SCORE_MAX
     )
-    parser.add_argument(
-        "--report-file", required=True, help="Path to the synthesized review report"
+    status = payload["status"]
+    if not isinstance(status, str) or status not in STATUSES:
+        raise ContractError("Resolved outcome has an invalid status.")
+    validate_status_band(status, score)
+    reviewed_sha = _require_sha(payload["reviewed_sha"], key="reviewed_sha")
+    raw_findings = payload["findings"]
+    if not isinstance(raw_findings, list):
+        raise ContractError("Resolved outcome findings must be a list.")
+    findings: list[dict[str, str]] = []
+    identifiers: set[str] = set()
+    for raw in raw_findings:
+        if not isinstance(raw, dict) or set(raw) != {
+            "id",
+            "severity",
+            "section",
+            "title",
+        }:
+            raise ContractError("Resolved outcome contains an invalid finding.")
+        if not all(isinstance(value, str) for value in raw.values()):
+            raise ContractError("Resolved outcome finding values must be strings.")
+        finding = dict(raw)
+        if not re.fullmatch(r"F-\d+", finding["id"]):
+            raise ContractError("Resolved outcome contains an invalid finding ID.")
+        if finding["id"] in identifiers:
+            raise ContractError(f"Duplicate finding identifier '{finding['id']}'.")
+        identifiers.add(finding["id"])
+        if (
+            finding["severity"] not in SEVERITIES
+            or finding["section"] not in FINDING_SECTIONS.values()
+        ):
+            raise ContractError(
+                "Resolved outcome contains an invalid finding classification."
+            )
+        if not finding["title"]:
+            raise ContractError("Resolved outcome finding title must not be empty.")
+        findings.append(finding)
+    expected_ids = [f"F-{number}" for number in range(1, len(findings) + 1)]
+    if [finding["id"] for finding in findings] != expected_ids:
+        raise ContractError("Resolved outcome finding IDs are not sequential.")
+    scored_findings = [
+        Finding(finding["id"], finding["section"], finding["severity"])
+        for finding in findings
+    ]
+    if score_findings(scored_findings) != score:
+        raise ContractError("Resolved outcome score contradicts its findings.")
+    if review_status(score, scored_findings) != status:
+        raise ContractError("Resolved outcome status contradicts its findings.")
+    advisory = advisory_completion(score, status, findings)
+    has_blocker = any(finding["section"] in BLOCKING_SECTIONS for finding in findings)
+    if status == STATUS_CLEAN and has_blocker:
+        raise ContractError("A clean outcome cannot contain blocking findings.")
+    if status == STATUS_PASSING and score >= CLEAN_MIN_SCORE and not has_blocker:
+        raise ContractError("A passing outcome at 95 or above needs an open blocker.")
+    if payload["advisory"] is not advisory:
+        raise ContractError("Resolved outcome advisory flag contradicts its findings.")
+    if not isinstance(payload["summary"], str):
+        raise ContractError("Resolved outcome summary must be a string.")
+    outcome = ReviewOutcome(
+        score, status, reviewed_sha, tuple(findings), advisory, payload["summary"]
     )
-    return parser
+    if outcome_summary(score, status, advisory) != payload["summary"]:
+        raise ContractError("Resolved outcome summary is invalid.")
+    return outcome
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Validate one report and print its contract as deterministic JSON."""
-    args = build_parser().parse_args(argv)
+def read_outcome(path: str | Path) -> ReviewOutcome:
+    """Read one resolved outcome artifact from disk."""
     try:
-        report_text = Path(args.report_file).read_text(encoding="utf-8")
-        payload = report_contract_payload(parse_report_contract(report_text))
-    except (OSError, ContractError) as error:
-        print(f"Error: {error}", file=sys.stderr)
-        return 1
-    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
-    return 0
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ContractError(
+            f"Failed to read resolved outcome '{path}': {error}"
+        ) from error
+    return deserialize_outcome(payload)
+
+
+def write_json(path: str | Path, payload: object) -> None:
+    """Write a deterministic JSON artifact."""
+    Path(path).write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+
+def completion_signal(
+    outcome: ReviewOutcome,
+    *,
+    cycle: int,
+    review_url: str | None,
+    post_succeeded: bool,
+) -> dict[str, Any] | None:
+    """Build the deterministic terminal signal after the posting attempt.
+
+    ``None`` means the validated result requires the fixer. Posting failure has
+    precedence over every review outcome and can never produce completion.
+    """
+    _require_int(cycle, key="cycle", minimum=1, maximum=None)
+    if not post_succeeded:
+        return {
+            "signal": "ABORT",
+            "cycle": cycle,
+            "details": {
+                "reason": "post_failed",
+                "message": "The review comment was not posted.",
+                "score": outcome.score,
+                "review_url": None,
+            },
+        }
+    if not isinstance(review_url, str) or not review_url:
+        raise ContractError("A successful post requires a non-empty review URL.")
+    if outcome.status == STATUS_CLEAN:
+        return {
+            "signal": "REVIEW_COMPLETE",
+            "cycle": cycle,
+            "details": {
+                "score": outcome.score,
+                "status": outcome.status,
+                "review_url": review_url,
+            },
+        }
+    if outcome.advisory:
+        return {
+            "signal": "REVIEW_COMPLETE_WITH_FINDINGS",
+            "cycle": cycle,
+            "details": {
+                "score": outcome.score,
+                "status": outcome.status,
+                "review_url": review_url,
+                "reviewed_sha": outcome.reviewed_sha,
+                "open_findings": list(outcome.findings),
+            },
+        }
+    return None
 
 
 def _require_int(value: object, *, key: str, minimum: int, maximum: int | None) -> int:
@@ -587,6 +726,55 @@ def is_legacy_review(payload: dict[str, Any]) -> bool:
 def strip_metadata_block(body: str) -> str:
     """Remove the hidden metadata block from a comment body."""
     return METADATA_BLOCK_RE.sub("", body, count=1).strip()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command boundary used by the orchestration prompt."""
+    parser = argparse.ArgumentParser(description="Resolve consensus-review outcomes.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    resolve = commands.add_parser("resolve", help="Write a resolved outcome artifact")
+    resolve.add_argument("--report-file", required=True)
+    resolve.add_argument("--score", type=int, required=True)
+    resolve.add_argument("--status", choices=STATUSES, required=True)
+    resolve.add_argument("--reviewed-sha", required=True)
+    resolve.add_argument("--output", required=True)
+
+    signal = commands.add_parser("signal", help="Write a terminal signal artifact")
+    signal.add_argument("--outcome-file", required=True)
+    signal.add_argument("--cycle", type=int, required=True)
+    signal.add_argument("--review-url")
+    signal.add_argument("--post-failed", action="store_true")
+    signal.add_argument("--output", required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Resolve an outcome or construct its post-bound terminal signal."""
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "resolve":
+            report_text = Path(args.report_file).read_text(encoding="utf-8")
+            outcome = resolve_review_outcome(
+                report_text,
+                score=args.score,
+                status=args.status,
+                reviewed_sha=args.reviewed_sha,
+            )
+            write_json(args.output, serialize_outcome(outcome))
+        else:
+            outcome = read_outcome(args.outcome_file)
+            signal = completion_signal(
+                outcome,
+                cycle=args.cycle,
+                review_url=args.review_url,
+                post_succeeded=not args.post_failed,
+            )
+            write_json(args.output, signal)
+    except (ContractError, OSError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

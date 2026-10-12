@@ -42,15 +42,16 @@ None.
 None.
 """
 
-SUMMARY = "- Review passed with a score of 90/100. A fix cycle follows.\n"
+SUMMARY = (
+    "- Review passed with a score of 90/100. "
+    "A fix cycle will address the open findings.\n"
+)
 
 REQUIRED_ARGS = [
     "--delegation-mode",
     "parallel-subagents",
     "--plan-source",
     "none",
-    "--reviewed-sha",
-    "1a2b3c4",
     "--scope-basis",
     "full-diff",
     "--files-touched",
@@ -74,15 +75,34 @@ def load_post_review_comment() -> ModuleType:
     return module
 
 
-def write_inputs(tmp_path: Path, *, report: str = REPORT, summary: str = SUMMARY):
+def write_inputs(
+    tmp_path: Path,
+    *,
+    report: str = REPORT,
+    summary: str = SUMMARY,
+    outcome_report: str = REPORT,
+):
     review_file = tmp_path / "review-02.md"
     review_file.write_text(report, encoding="utf-8")
     summary_file = tmp_path / "summary-02.md"
     summary_file.write_text(summary, encoding="utf-8")
-    return review_file, summary_file
+    outcome_file = tmp_path / "outcome-02.json"
+    contract = sys.modules["review_contract"]
+    outcome = contract.resolve_review_outcome(
+        outcome_report,
+        score=90,
+        status="passing",
+        reviewed_sha="1a2b3c4",
+    )
+    outcome_file.write_text(
+        json.dumps(contract.serialize_outcome(outcome)), encoding="utf-8"
+    )
+    return review_file, summary_file, outcome_file
 
 
-def base_args(review_file: Path, summary_file: Path, **overrides: str) -> list[str]:
+def base_args(
+    review_file: Path, summary_file: Path, outcome_file: Path, **overrides: str
+) -> list[str]:
     args = [
         "--pr-number",
         "7",
@@ -92,8 +112,8 @@ def base_args(review_file: Path, summary_file: Path, **overrides: str) -> list[s
         str(summary_file),
         "--cycle",
         "2",
-        "--status",
-        "passing",
+        "--outcome-file",
+        str(outcome_file),
         *REQUIRED_ARGS,
     ]
     for flag, value in overrides.items():
@@ -173,10 +193,19 @@ def test_summary_rejects_the_wrong_shape(summary: str) -> None:
         module.validate_summary(summary)
 
 
+def test_summary_first_bullet_must_match_the_resolved_outcome() -> None:
+    module = load_post_review_comment()
+    expected = "- Review passed with a score of 95/100. Expected outcome."
+    with pytest.raises(module.ContractError, match="contradicts"):
+        module.validate_summary(
+            "- A different outcome.\n", expected_first_bullet=expected
+        )
+
+
 def test_report_must_carry_merged_evidence() -> None:
     module = load_post_review_comment()
     with pytest.raises(module.ContractError, match="Evidence"):
-        module.validate_report("### Quality Score: 91/100 — Passing\n")
+        module.validate_report("### Quality Score: 90/100 — Passing\n")
 
 
 def test_report_must_not_nest_a_details_block() -> None:
@@ -186,26 +215,106 @@ def test_report_must_not_nest_a_details_block() -> None:
         module.validate_report(report)
 
 
-def test_score_comes_only_from_the_report_heading() -> None:
-    """No override exists: published metadata cannot contradict the report."""
+def test_posting_accepts_only_the_resolved_outcome_source() -> None:
     module = load_post_review_comment()
-    assert module.resolve_score(REPORT) == 90
+    assert not hasattr(module, "resolve_score")
+    assert not hasattr(module, "extract_quality_score")
+    help_text = module.build_parser().format_help()
+    assert "--score" not in help_text
+    assert "--status" not in help_text
+    assert "--reviewed-sha" not in help_text
+    assert "--outcome-file" in help_text
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        REPORT.replace("90/100", "95/100"),
+        REPORT.replace("— Passing", "— Fully Clean"),
+    ],
+)
+def test_post_refuses_an_outcome_that_contradicts_the_report(report: str) -> None:
+    module = load_post_review_comment()
+    outcome = module.resolve_review_outcome(
+        REPORT, score=90, status="passing", reviewed_sha="1a2b3c4"
+    )
     with pytest.raises(module.ContractError):
-        module.resolve_score("### Evidence\n")
-    assert "--score" not in module.build_parser().format_help()
+        module.build_comment_body(
+            report_text=report,
+            summary_text=SUMMARY,
+            cycle=2,
+            outcome=outcome,
+            delegation_mode="parallel-subagents",
+            plan_source="none",
+            scope_basis="full-diff",
+            files_touched=3,
+            findings_opened=2,
+            findings_closed=1,
+        )
+
+
+def test_advisory_report_comment_and_terminal_signal_agree() -> None:
+    module = load_post_review_comment()
+    report = """### Quality Score: 95/100 — Passing
+
+### Evidence
+
+- **Files examined:** src/render.py
+- **Commands run:** uv run pytest
+
+### Must Fix
+
+None.
+
+### Should Fix
+
+#### [F-1] [MEDIUM] Preserve the payload
+
+### Latent Findings
+
+None.
+"""
+    outcome = module.resolve_review_outcome(
+        report, score=95, status="passing", reviewed_sha="abc1234"
+    )
+    body = module.build_comment_body(
+        report_text=report,
+        summary_text=outcome.summary,
+        cycle=6,
+        outcome=outcome,
+        delegation_mode="parallel-subagents",
+        plan_source="none",
+        scope_basis="full-diff",
+        files_touched=1,
+        findings_opened=1,
+        findings_closed=0,
+    )
+    signal = sys.modules["review_contract"].completion_signal(
+        outcome,
+        cycle=6,
+        review_url="https://example.test/review/6",
+        post_succeeded=True,
+    )
+    assert outcome.summary in body
+    assert "#### [F-1] [MEDIUM] Preserve the payload" in body
+    assert signal is not None
+    assert signal["details"]["open_findings"] == list(outcome.findings)
+    comment_metadata = json.loads(body.split("\n", 2)[1])
+    assert signal["details"]["reviewed_sha"] == comment_metadata["reviewed_sha"]
 
 
 def test_comment_body_opens_with_exact_v2_metadata(tmp_path: Path) -> None:
     module = load_post_review_comment()
+    outcome = module.resolve_review_outcome(
+        REPORT, score=90, status="passing", reviewed_sha="1a2b3c4"
+    )
     body = module.build_comment_body(
         report_text=REPORT,
         summary_text=SUMMARY,
         cycle=2,
-        status="passing",
-        score=90,
+        outcome=outcome,
         delegation_mode="parallel-subagents",
         plan_source="none",
-        reviewed_sha="1a2b3c4",
         scope_basis="full-diff",
         files_touched=3,
         findings_opened=2,
@@ -233,15 +342,16 @@ def test_comment_body_opens_with_exact_v2_metadata(tmp_path: Path) -> None:
 
 def test_comment_body_renders_the_template_without_placeholders() -> None:
     module = load_post_review_comment()
+    outcome = module.resolve_review_outcome(
+        REPORT, score=90, status="passing", reviewed_sha="1a2b3c4"
+    )
     body = module.build_comment_body(
         report_text=REPORT,
         summary_text=SUMMARY,
         cycle=2,
-        status="passing",
-        score=90,
+        outcome=outcome,
         delegation_mode="parallel-subagents",
         plan_source="supplied: .plan/feature.md",
-        reviewed_sha="1a2b3c4",
         scope_basis="delta-since:9f3a25e",
         files_touched=3,
         findings_opened=2,
@@ -260,39 +370,35 @@ def test_comment_body_renders_the_template_without_placeholders() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "icon", "report"),
-    [
-        (
-            "clean",
-            "✅",
-            REPORT.replace("90/100 — Passing", "100/100 — Fully Clean").replace(
-                "#### [F-1] [HIGH] Empty row list renders a header with no body\n\n"
-                "**Location:** src/render.py:48",
-                "None.",
-            ),
-        ),
-        ("passing", "\U0001f7e1", REPORT),
-        (
-            "failing",
-            "❌",
-            REPORT.replace("90/100 — Passing", "80/100 — Failing").replace(
-                "[HIGH]", "[CRITICAL]"
-            ),
-        ),
-    ],
+    ("status", "icon", "score"),
+    [("clean", "✅", 100), ("passing", "\U0001f7e1", 90), ("failing", "❌", 80)],
 )
-def test_status_icons(status: str, icon: str, report: str) -> None:
+def test_status_icons(status: str, icon: str, score: int) -> None:
     """Each status renders its icon; the score must sit in that status's band."""
     module = load_post_review_comment()
+    report = REPORT.replace(
+        "90/100 — Passing", f"{score}/100 — {module.status_label(status)}"
+    )
+    if status == "clean":
+        report = report.replace(
+            "#### [F-1] [HIGH] Empty row list renders a header with no body",
+            "None.",
+        )
+    elif status == "failing":
+        report = report.replace(
+            "**Location:** src/render.py:48",
+            "**Location:** src/render.py:48\n\n#### [F-2] [HIGH] Another failure",
+        )
+    outcome = module.resolve_review_outcome(
+        report, score=score, status=status, reviewed_sha="1a2b3c4"
+    )
     body = module.build_comment_body(
         report_text=report,
-        summary_text=SUMMARY,
+        summary_text=outcome.summary,
         cycle=1,
-        status=status,
-        score=module.resolve_score(report),
+        outcome=outcome,
         delegation_mode="parallel-subagents",
         plan_source="none",
-        reviewed_sha="1a2b3c4",
         scope_basis="full-diff",
         files_touched=1,
         findings_opened=0,
@@ -305,11 +411,12 @@ def test_main_posts_to_github_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_post_review_comment()
-    review_file, summary_file = write_inputs(tmp_path)
+    review_file, summary_file, outcome_file = write_inputs(tmp_path)
     posted = capture_posts(module, monkeypatch)
 
     exit_code = module.main(
-        base_args(review_file, summary_file) + ["--repo-dir", str(tmp_path)]
+        base_args(review_file, summary_file, outcome_file)
+        + ["--repo-dir", str(tmp_path)]
     )
 
     assert exit_code == 0
@@ -323,12 +430,13 @@ def test_main_posts_to_gitlab_when_the_env_file_selects_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_post_review_comment()
-    review_file, summary_file = write_inputs(tmp_path)
+    review_file, summary_file, outcome_file = write_inputs(tmp_path)
     (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=gitlab\n", encoding="utf-8")
     posted = capture_posts(module, monkeypatch)
 
     exit_code = module.main(
-        base_args(review_file, summary_file) + ["--repo-dir", str(tmp_path)]
+        base_args(review_file, summary_file, outcome_file)
+        + ["--repo-dir", str(tmp_path)]
     )
 
     assert exit_code == 0
@@ -339,12 +447,12 @@ def test_main_platform_flag_beats_the_env_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_post_review_comment()
-    review_file, summary_file = write_inputs(tmp_path)
+    review_file, summary_file, outcome_file = write_inputs(tmp_path)
     (tmp_path / ".env").write_text("DEV_SEC_OPS_PLATFORM=gitlab\n", encoding="utf-8")
     posted = capture_posts(module, monkeypatch)
 
     exit_code = module.main(
-        base_args(review_file, summary_file)
+        base_args(review_file, summary_file, outcome_file)
         + ["--repo-dir", str(tmp_path), "--platform", "github"]
     )
 
@@ -355,15 +463,11 @@ def test_main_platform_flag_beats_the_env_file(
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"reviewed_sha": "ABC1234"},
-        {"reviewed_sha": "abc12"},
         {"scope_basis": "since:abc1234"},
         {"plan_source": ".plan/feature.md"},
         {"files_touched": "-1"},
     ],
     ids=[
-        "uppercase-sha",
-        "short-sha",
         "bad-scope",
         "bad-plan-source",
         "negative-count",
@@ -376,11 +480,11 @@ def test_main_rejects_invalid_metadata_without_posting(
     overrides: dict[str, str],
 ) -> None:
     module = load_post_review_comment()
-    review_file, summary_file = write_inputs(tmp_path)
+    review_file, summary_file, outcome_file = write_inputs(tmp_path)
     posted = capture_posts(module, monkeypatch)
 
     exit_code = module.main(
-        base_args(review_file, summary_file, **overrides)
+        base_args(review_file, summary_file, outcome_file, **overrides)
         + ["--repo-dir", str(tmp_path)]
     )
 
@@ -393,11 +497,12 @@ def test_main_rejects_an_empty_review_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = load_post_review_comment()
-    review_file, summary_file = write_inputs(tmp_path, report="   \n")
+    review_file, summary_file, outcome_file = write_inputs(tmp_path, report="   \n")
     posted = capture_posts(module, monkeypatch)
 
     exit_code = module.main(
-        base_args(review_file, summary_file) + ["--repo-dir", str(tmp_path)]
+        base_args(review_file, summary_file, outcome_file)
+        + ["--repo-dir", str(tmp_path)]
     )
 
     assert exit_code == 1
@@ -409,11 +514,12 @@ def test_main_reports_a_missing_platform_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = load_post_review_comment()
-    review_file, summary_file = write_inputs(tmp_path)
+    review_file, summary_file, outcome_file = write_inputs(tmp_path)
     monkeypatch.setattr(module, "GH", None)
 
     exit_code = module.main(
-        base_args(review_file, summary_file) + ["--repo-dir", str(tmp_path)]
+        base_args(review_file, summary_file, outcome_file)
+        + ["--repo-dir", str(tmp_path)]
     )
 
     assert exit_code == 1
@@ -424,7 +530,7 @@ def test_main_reports_a_failed_post(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = load_post_review_comment()
-    review_file, summary_file = write_inputs(tmp_path)
+    review_file, summary_file, outcome_file = write_inputs(tmp_path)
 
     def fail(pr_number: int, body: str, repo_dir: str = ".") -> None:
         raise subprocess.CalledProcessError(1, ["gh"])
@@ -432,7 +538,8 @@ def test_main_reports_a_failed_post(
     monkeypatch.setattr(module, "post_comment_github", fail)
 
     exit_code = module.main(
-        base_args(review_file, summary_file) + ["--repo-dir", str(tmp_path)]
+        base_args(review_file, summary_file, outcome_file)
+        + ["--repo-dir", str(tmp_path)]
     )
 
     assert exit_code == 1
@@ -476,17 +583,17 @@ def test_the_script_still_renders_the_frozen_wire_format() -> None:
     """
     module = load_post_review_comment()
     expected = (FIXTURES_DIR / "review-comment-v2.md").read_text(encoding="utf-8")
+    report = (FIXTURES_DIR / "review-report.md").read_text(encoding="utf-8").strip()
+    outcome = module.resolve_review_outcome(
+        report, score=85, status="passing", reviewed_sha="1a2b3c4"
+    )
     rendered = module.build_comment_body(
-        report_text=(FIXTURES_DIR / "review-report.md")
-        .read_text(encoding="utf-8")
-        .strip(),
+        report_text=report,
         summary_text=(FIXTURES_DIR / "review-summary.md").read_text(encoding="utf-8"),
         cycle=2,
-        status="passing",
-        score=85,
+        outcome=outcome,
         delegation_mode="parallel-subagents",
         plan_source="none",
-        reviewed_sha="1a2b3c4",
         scope_basis="full-diff",
         files_touched=3,
         findings_opened=2,
@@ -504,135 +611,28 @@ def test_a_closing_details_tag_is_rejected_too() -> None:
 
 @pytest.mark.parametrize(
     ("status", "score"),
-    [("clean", 60), ("clean", 94), ("passing", 60), ("failing", 91)],
+    [("clean", 60), ("clean", 94), ("passing", 60), ("failing", 90)],
 )
 def test_a_status_contradicting_the_score_is_refused(status: str, score: int) -> None:
     """The comment shows one verdict and the metadata another; recovery routes
     on the metadata, so the pair must agree before publication."""
     module = load_post_review_comment()
+    outcome = module.resolve_review_outcome(
+        REPORT, score=90, status="passing", reviewed_sha="1a2b3c4"
+    )
+    report = REPORT.replace(
+        "90/100 — Passing", f"{score}/100 — {module.status_label(status)}"
+    )
     with pytest.raises(module.ContractError):
         module.build_comment_body(
-            report_text=REPORT.replace(
-                "90/100 — Passing", f"{score}/100 — {module.status_label(status)}"
-            ),
+            report_text=report,
             summary_text=SUMMARY,
             cycle=1,
-            status=status,
-            score=score,
+            outcome=outcome,
             delegation_mode="parallel-subagents",
             plan_source="none",
-            reviewed_sha="1a2b3c4",
             scope_basis="full-diff",
             files_touched=1,
             findings_opened=0,
             findings_closed=0,
         )
-
-
-def test_report_and_comment_must_agree_on_score_and_status() -> None:
-    module = load_post_review_comment()
-    values = dict(
-        report_text=REPORT,
-        summary_text=SUMMARY,
-        cycle=1,
-        status="passing",
-        score=90,
-        delegation_mode="parallel-subagents",
-        plan_source="none",
-        reviewed_sha="1a2b3c4",
-        scope_basis="full-diff",
-        files_touched=1,
-        findings_opened=1,
-        findings_closed=0,
-    )
-    with pytest.raises(module.ContractError, match="score"):
-        module.build_comment_body(**(values | {"score": 95}))
-    with pytest.raises(module.ContractError, match="status"):
-        module.build_comment_body(
-            **(values | {"report_text": REPORT.replace("Passing", "Fully Clean")})
-        )
-
-
-def test_comment_rejects_contradictory_quality_headings() -> None:
-    module = load_post_review_comment()
-    contradictory = REPORT + "\n### Quality Score: 90/100 — Fully Clean\n"
-    with pytest.raises(module.ContractError, match="exactly one"):
-        module.build_comment_body(
-            report_text=contradictory,
-            summary_text=SUMMARY,
-            cycle=1,
-            status="passing",
-            score=90,
-            delegation_mode="parallel-subagents",
-            plan_source="none",
-            reviewed_sha="1a2b3c4",
-            scope_basis="full-diff",
-            files_touched=1,
-            findings_opened=1,
-            findings_closed=0,
-        )
-
-
-@pytest.mark.parametrize(
-    ("score", "severities", "cycle", "latent"),
-    [
-        (96, ["LOW", "LOW"], 1, False),
-        (95, ["MEDIUM"], 1, False),
-        (96, ["LOW", "LOW"], 7, False),
-        (96, ["LOW"], 1, True),
-    ],
-)
-def test_advisory_comment_and_signal_payload_share_report_and_reviewed_sha(
-    score: int, severities: list[str], cycle: int, latent: bool
-) -> None:
-    module = load_post_review_comment()
-    import review_contract as contract
-
-    finding_lines = "\n\n".join(
-        f"#### [F-{number}] [{severity}] Finding {number}"
-        for number, severity in enumerate(severities, 1)
-    )
-    latent_line = "None."
-    if latent:
-        latent_line = f"#### [F-{len(severities) + 1}] [LOW] Latent risk"
-    report = (
-        f"### Quality Score: {score}/100 — Passing\n\n"
-        "### Evidence\n\nchecked\n\n"
-        "### Must Fix\n\nNone.\n\n"
-        f"### Should Fix\n\n{finding_lines}\n\n"
-        f"### Latent Findings\n\n{latent_line}\n"
-    )
-    report_contract = contract.parse_report_contract(report)
-    findings = report_contract.open_findings
-    assert report_contract.score == score
-    assert report_contract.advisory_completion
-    reviewed_sha = "a123456"
-    body = module.build_comment_body(
-        report_text=report,
-        summary_text="- Passing review; caller will disposition open findings.",
-        cycle=cycle,
-        status="passing",
-        score=score,
-        delegation_mode="parallel-subagents",
-        plan_source="none",
-        reviewed_sha=reviewed_sha,
-        scope_basis="full-diff",
-        files_touched=1,
-        findings_opened=len(findings),
-        findings_closed=0,
-    )
-    metadata = contract.parse_metadata_block(body)
-    assert metadata is not None
-    assert (metadata["score"], metadata["status"], metadata["reviewed_sha"]) == (
-        score,
-        "passing",
-        reviewed_sha,
-    )
-    assert f"*Score: {score}/100 (Passing).*" in body
-    assert f"Reviewed: {reviewed_sha}." in body
-    if latent:
-        assert body.index("[F-1]") < body.index(f"[F-{len(severities) + 1}]")
-    assert [item["id"] for item in findings] == [
-        *[f"F-{number}" for number in range(1, len(severities) + 1)],
-        *([f"F-{len(severities) + 1}"] if latent else []),
-    ]

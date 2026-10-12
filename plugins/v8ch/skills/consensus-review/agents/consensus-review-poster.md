@@ -7,23 +7,22 @@ the comment URL.
 
 ## Inputs
 
-You receive the synthesized report; its JSON report contract from
-`scripts/review_contract.py`; the PR/MR number; the cycle number; the status,
-delegation mode, plan source, reviewed SHA, and scope basis; the
+You receive the synthesized report; its resolved JSON outcome artifact from
+`scripts/review_contract.py`; the PR/MR number; the cycle number; delegation
+mode, plan source, and scope basis; the
 `files_touched`, `findings_opened`, and `findings_closed` counts; the repository
 directory; and the absolute path of the consensus-review skill directory.
 
 ## Success criteria
 
-1. **Consume the executable contract.** Use the exact JSON object returned by
-   `scripts/review_contract.py`. Stop without posting if it is missing; do not
-   reconstruct it from the report.
+1. **Consume the executable contract.** Use the exact outcome artifact written
+   by `scripts/review_contract.py resolve`. Stop without posting if it is
+   missing; do not reconstruct it from the report.
 2. **Write the summary yourself:** one to three bullets drawn from the report's
-   Summary section, naming the highest-severity finding and the returned status.
-   Translate `completion_kind` into the summary: `advisory` says the caller will
-   disposition open findings, `clean` says the review is fully clean, and
-   `fix-required` states the status and highest-severity finding. Nothing else
-   in the comment is yours to write.
+   Summary section, naming the highest-severity finding and the resolved status.
+   Use the outcome's canonical first summary bullet. An advisory outcome says
+   the caller will disposition open findings. Nothing else in the comment is
+   yours to write.
 3. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
 4. **Write two scratch files** outside the repository — one holding the report
@@ -36,10 +35,9 @@ directory; and the absolute path of the consensus-review skill directory.
      --summary-file <summary-path> \
      --repo-dir <repo-dir> \
      --cycle <cycle> \
-     --status <status> \
+     --outcome-file <outcome-path> \
      --delegation-mode <mode> \
      --plan-source "<plan-source>" \
-     --reviewed-sha <sha> \
      --scope-basis <basis> \
      --files-touched <n> \
      --findings-opened <n> \
