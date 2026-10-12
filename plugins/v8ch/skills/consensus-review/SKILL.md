@@ -184,10 +184,17 @@ and stop without a score.
 **No PR/MR:** return the report unchanged and emit `REVIEW_COMPLETE` with
 `review_url` `null`. A local review never fixes.
 
-**PR/MR:** call `scripts/review_contract.py`'s
-`parse_report_contract(report_text)` once. It validates the report, recomputes
-the score and status, and returns the ordered findings, advisory outcome, and
-summary directive. Pass those authoritative values and the report to
+**PR/MR:** write the report verbatim to a scratch file and run the executable
+contract once:
+
+```bash
+uv run <skill-dir>/scripts/review_contract.py --report-file <report-path>
+```
+
+It validates the report, recomputes the score and status, and prints one JSON
+object containing `score`, `status`, ordered `open_findings`,
+`advisory_completion`, and `completion_kind`. A nonzero exit is `ABORT` with
+reason `contract_failed`. Pass that exact JSON object and the report to
 `consensus-review-poster` once with the PR/MR number,
 the cycle, the status, the delegation mode, the plan source, the reviewed SHA,
 the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
@@ -195,8 +202,8 @@ counts, the repository directory, and the absolute skill directory. A posting
 failure is `ABORT` with `reason` `post_failed`.
 
 Keep the returned comment URL and the SHA captured for this review. Carry the
-score, status, `open_findings`, and `advisory_completion` from the same parsed
-contract used by the poster. The poster must have succeeded before either
+score, status, `open_findings`, and `advisory_completion` from the same JSON
+contract consumed by the poster. The poster must have succeeded before either
 completion signal is emitted.
 
 ### 10. Branch on status

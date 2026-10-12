@@ -123,6 +123,7 @@ def test_skill_documents_every_terminal_signal() -> None:
         "branch_mismatch",
         "platform_auth",
         "post_failed",
+        "contract_failed",
         "read_only_role_mutated",
     ):
         assert reason in text
@@ -134,7 +135,7 @@ def test_advisory_completion_follows_successful_post_and_precedes_fixer() -> Non
     workflow = text.split("### 9. Post or return", 1)[1].split(
         "## Constraints and authority", 1
     )[0]
-    assert workflow.index("parse_report_contract(report_text)") < workflow.index(
+    assert workflow.index("review_contract.py --report-file") < workflow.index(
         "post_failed"
     )
     assert workflow.index("post_failed") < workflow.index(
@@ -155,7 +156,8 @@ def test_advisory_comment_summary_assigns_disposition_to_caller() -> None:
         encoding="utf-8"
     )
     assert "caller will" in text
-    assert "summary_directive" in text
+    assert "completion_kind" in text
+    assert "fix-required" in text
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:

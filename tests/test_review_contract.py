@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -215,7 +216,7 @@ None.
     ]
     result = contract.parse_report_contract(build_report(["LOW"], latent=True))
     assert result.advisory_completion
-    assert "caller will disposition" in result.summary_directive
+    assert result.completion_kind == contract.COMPLETION_ADVISORY
 
 
 def test_must_fix_and_clean_review_cannot_use_advisory_completion() -> None:
@@ -227,9 +228,20 @@ def test_must_fix_and_clean_review_cannot_use_advisory_completion() -> None:
     assert not latent.advisory_completion
 
 
-def test_report_parser_ignores_headings_inside_fences() -> None:
+@pytest.mark.parametrize("indent", ["", " ", "  ", "   "])
+def test_report_parser_ignores_headings_inside_fences(indent: str) -> None:
     report = build_report(["MEDIUM"]) + (
-        "\n```markdown\n### Must Fix\n\n#### [F-99] [CRITICAL] Example only\n```\n"
+        f"\n{indent}```markdown\n### Must Fix\n\n"
+        f"#### [F-99] [CRITICAL] Example only\n{indent}```\n"
+    )
+    result = contract.parse_report_contract(report)
+    assert [finding["id"] for finding in result.open_findings] == ["F-1"]
+
+
+def test_fence_closing_suffix_does_not_expose_fenced_headings() -> None:
+    report = build_report(["MEDIUM"]) + (
+        "\n```markdown\n```not-a-close\n### Must Fix\n"
+        "#### [F-99] [CRITICAL] Example only\n```\n"
     )
     result = contract.parse_report_contract(report)
     assert [finding["id"] for finding in result.open_findings] == ["F-1"]
@@ -284,6 +296,72 @@ def test_report_contract_requires_top_level_evidence() -> None:
     )
     with pytest.raises(contract.ContractError, match="Evidence"):
         contract.parse_report_contract(report)
+
+
+def test_completion_kind_is_semantic_routing_state() -> None:
+    assert contract.parse_report_contract(build_report([])).completion_kind == "clean"
+    assert (
+        contract.parse_report_contract(build_report(["MEDIUM"])).completion_kind
+        == "advisory"
+    )
+    assert (
+        contract.parse_report_contract(
+            build_report(["HIGH"], section="Must Fix")
+        ).completion_kind
+        == "fix-required"
+    )
+
+
+def test_report_contract_cli_prints_authoritative_json(tmp_path: Path) -> None:
+    report_path = tmp_path / "review.md"
+    report_path.write_text(build_report(["MEDIUM"]), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "review_contract.py"),
+            "--report-file",
+            str(report_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {
+        "advisory_completion": True,
+        "completion_kind": "advisory",
+        "open_findings": [
+            {
+                "id": "F-1",
+                "section": "should-fix",
+                "severity": "MEDIUM",
+                "title": "Finding 1",
+            }
+        ],
+        "score": 95,
+        "status": "passing",
+    }
+
+
+def test_report_contract_cli_rejects_an_invalid_report(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "invalid-review.md"
+    report_path.write_text("### Evidence\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "review_contract.py"),
+            "--report-file",
+            str(report_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.startswith("Error:")
 
 
 def test_valid_metadata_fixture_passes_validation() -> None:

@@ -7,21 +7,23 @@ the comment URL.
 
 ## Inputs
 
-You receive the synthesized report; the PR/MR number; the cycle number; the
-status, delegation mode, plan source, reviewed SHA, and scope basis; the
+You receive the synthesized report; its JSON report contract from
+`scripts/review_contract.py`; the PR/MR number; the cycle number; the status,
+delegation mode, plan source, reviewed SHA, and scope basis; the
 `files_touched`, `findings_opened`, and `findings_closed` counts; the repository
 directory; and the absolute path of the consensus-review skill directory.
 
 ## Success criteria
 
-1. **Validate through the executable contract.** Use
-   `scripts/review_contract.py`'s `parse_report_contract(report_text)`. Stop
-   without posting on any contract error; do not compose a substitute.
+1. **Consume the executable contract.** Use the exact JSON object returned by
+   `scripts/review_contract.py`. Stop without posting if it is missing; do not
+   reconstruct it from the report.
 2. **Write the summary yourself:** one to three bullets drawn from the report's
    Summary section, naming the highest-severity finding and the returned status.
-   Follow the returned `summary_directive`; it is the authority for advisory
-   wording, including when it says the caller will disposition open findings.
-   Nothing else in the comment is yours to write.
+   Translate `completion_kind` into the summary: `advisory` says the caller will
+   disposition open findings, `clean` says the review is fully clean, and
+   `fix-required` states the status and highest-severity finding. Nothing else
+   in the comment is yours to write.
 3. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
 4. **Write two scratch files** outside the repository — one holding the report

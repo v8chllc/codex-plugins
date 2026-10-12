@@ -1,3 +1,9 @@
+#!/usr/bin/env uv run
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+
 """Executable consensus-review v2 contract for the Codex CLI plugin.
 
 Holds the scoring rules (C-1) and the audit-metadata schema (C-5) that
@@ -10,10 +16,13 @@ repositories.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 2
@@ -51,6 +60,15 @@ STATUS_LABELS: dict[str, str] = {
     STATUS_PASSING: "Passing",
     STATUS_FAILING: "Failing",
 }
+
+COMPLETION_ADVISORY = "advisory"
+COMPLETION_CLEAN = "clean"
+COMPLETION_FIX_REQUIRED = "fix-required"
+COMPLETION_KINDS: tuple[str, ...] = (
+    COMPLETION_ADVISORY,
+    COMPLETION_CLEAN,
+    COMPLETION_FIX_REQUIRED,
+)
 
 DELEGATION_MODES: tuple[str, ...] = ("parallel-subagents", "sequential-fallback")
 
@@ -135,13 +153,13 @@ class Finding:
 
 @dataclass(frozen=True)
 class ReportContract:
-    """Authoritative score, routing, and summary contract for one report."""
+    """Authoritative score and routing contract for one report."""
 
     score: int
     status: str
     open_findings: tuple[dict[str, str], ...]
     advisory_completion: bool
-    summary_directive: str
+    completion_kind: str
 
 
 def deduction(finding: Finding) -> int:
@@ -192,8 +210,8 @@ def _top_level_lines(report_text: str, *, prefix: str | None = None) -> list[str
     fence_character: str | None = None
     fence_length = 0
     for line in report_text.splitlines():
-        fence_match = re.match(r"^(`{3,}|~{3,})", line)
         if fence_character is not None:
+            fence_match = re.match(r"^ {0,3}(`+|~+)[ \t]*$", line)
             if (
                 fence_match
                 and fence_match.group(1)[0] == fence_character
@@ -202,6 +220,7 @@ def _top_level_lines(report_text: str, *, prefix: str | None = None) -> list[str
                 fence_character = None
                 fence_length = 0
             continue
+        fence_match = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
         if fence_match:
             fence_character = fence_match.group(1)[0]
             fence_length = len(fence_match.group(1))
@@ -324,18 +343,53 @@ def parse_report_contract(report_text: str) -> ReportContract:
         and SHOULD_FIX in sections
     )
     if advisory:
-        summary_directive = "Say the caller will disposition the open findings."
+        completion_kind = COMPLETION_ADVISORY
     elif status == STATUS_CLEAN:
-        summary_directive = "Say the review is fully clean."
+        completion_kind = COMPLETION_CLEAN
     else:
-        summary_directive = "State the status and highest-severity finding."
+        completion_kind = COMPLETION_FIX_REQUIRED
     return ReportContract(
         score=score,
         status=status,
         open_findings=tuple(findings),
         advisory_completion=advisory,
-        summary_directive=summary_directive,
+        completion_kind=completion_kind,
     )
+
+
+def report_contract_payload(contract: ReportContract) -> dict[str, object]:
+    """Return the stable JSON payload consumed by the orchestration layer."""
+    return {
+        "advisory_completion": contract.advisory_completion,
+        "completion_kind": contract.completion_kind,
+        "open_findings": list(contract.open_findings),
+        "score": contract.score,
+        "status": contract.status,
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the report-contract command-line parser."""
+    parser = argparse.ArgumentParser(
+        description="Validate a consensus-review report and print its contract."
+    )
+    parser.add_argument(
+        "--report-file", required=True, help="Path to the synthesized review report"
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Validate one report and print its contract as deterministic JSON."""
+    args = build_parser().parse_args(argv)
+    try:
+        report_text = Path(args.report_file).read_text(encoding="utf-8")
+        payload = report_contract_payload(parse_report_contract(report_text))
+    except (OSError, ContractError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    return 0
 
 
 def _require_int(value: object, *, key: str, minimum: int, maximum: int | None) -> int:
@@ -533,3 +587,7 @@ def is_legacy_review(payload: dict[str, Any]) -> bool:
 def strip_metadata_block(body: str) -> str:
     """Remove the hidden metadata block from a comment body."""
     return METADATA_BLOCK_RE.sub("", body, count=1).strip()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
