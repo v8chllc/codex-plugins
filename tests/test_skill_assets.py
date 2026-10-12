@@ -108,6 +108,7 @@ def test_skill_documents_every_terminal_signal() -> None:
     text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
     for signal in (
         "REVIEW_COMPLETE",
+        "CAPPED_REVIEW_COMPLETE",
         "NO_DIFF",
         "EVIDENCE_FAILED",
         "QUALITY_FAILURES",
@@ -126,6 +127,45 @@ def test_skill_documents_every_terminal_signal() -> None:
     ):
         assert reason in text
     assert "MAX_CYCLES_REACHED" not in text
+
+
+def test_text_only_repairs_have_distinct_author_proof() -> None:
+    fixer = (CONSENSUS_REVIEW_DIR / "agents/consensus-review-fixer.md").read_text(
+        encoding="utf-8"
+    )
+    workflow = (CONSENSUS_REVIEW_DIR / "references/fix-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Author Verifications" in fixer
+    assert "finding ID" in fixer
+    assert "intended correction" in fixer
+    assert "no mutation check or new automated test" in fixer
+    assert "command,\nscript block, or configuration snippet" in fixer
+    assert "unconfirmable check" in fixer
+    assert "only author-verified text-only repairs commits" in workflow
+    assert "the author verifications for text-only repairs, in a separate section" in (
+        workflow
+    )
+
+
+def test_single_cycle_cap_runs_normal_fix_once_and_has_terminal_signal() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    workflow = (CONSENSUS_REVIEW_DIR / "references/fix-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Accept it only when a PR/MR number is in scope" in skill
+    assert "the default budget remains three reviews per invocation" in skill
+    assert "run that workflow once, never\n  review again" in skill
+    assert "do not treat an unreviewed fix commit\n  as a clean review" in skill
+    assert "`CAPPED_REVIEW_COMPLETE` | A capped PR/MR invocation completed" in skill
+    for key in ("`score`", "`status`", "`review_url`", "`commit_shas`", "`work_items`"):
+        assert (
+            key
+            in skill.split("| `CAPPED_REVIEW_COMPLETE` |", maxsplit=1)[1].split(
+                "\n", maxsplit=1
+            )[0]
+        )
+    assert "it never starts a second\nreview" in workflow
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:

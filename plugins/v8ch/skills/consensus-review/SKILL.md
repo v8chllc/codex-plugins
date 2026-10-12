@@ -23,7 +23,8 @@ ends with exactly one terminal signal.
 3. The synthesizer alone decides the score and the status.
 4. A PR/MR run posts exactly one `review` comment per cycle. Fix evidence lives
    in the fix commit, never in a second comment.
-5. At most three reviews run per invocation.
+5. At most three reviews run per invocation by default. A caller-declared
+   single-cycle cap on a PR/MR runs exactly one review.
 6. The last thing written is one fenced `consensus-review-signal` block.
 
 ## Inputs
@@ -45,6 +46,13 @@ never as a severity source. Record the plan source as the literal `none`, or as
 `supplied: <path or short description>`. The same value goes in the report
 provenance and in the `plan_source` metadata field. Plan context is never
 recovered from PR/MR comments.
+
+**Single-cycle cap** — a caller may declare `single-cycle cap` for a PR/MR
+invocation. Accept it only when a PR/MR number is in scope. It limits this
+invocation to one ordinary review and, for a `passing` or `failing` result, its
+normal fix workflow. It does not change reviewer or synthesizer instructions,
+the PR/MR's cumulative cycle number, or later invocations. Without this input,
+the default budget remains three reviews per invocation.
 
 **Platform** — `DEV_SEC_OPS_PLATFORM` from `.env` at the repository root, or
 `--platform github|gitlab`.
@@ -191,18 +199,26 @@ failure is `ABORT` with `reason` `post_failed`.
 
 ### 10. Branch on status
 
-- `clean` — stop and emit `REVIEW_COMPLETE`.
+- `clean` — stop and emit `CAPPED_REVIEW_COMPLETE` when capped, otherwise
+  `REVIEW_COMPLETE`.
 - `passing` or `failing` — run `references/fix-workflow.md`, then review again if
   the budget allows. That workflow returns an outcome; this skill emits the one
-  terminal signal.
+  terminal signal. With the single-cycle cap, run that workflow once, never
+  review again, and emit `CAPPED_REVIEW_COMPLETE` with the review result and
+  any fix commit SHAs. State the fix outcome and any blocker, quality failure,
+  or uncommitted edits before that signal; do not treat an unreviewed fix commit
+  as a clean review.
 
-**Budget:** at most three reviews per invocation, whatever the PR/MR's cycle
+**Budget:** at most three reviews per invocation by default, whatever the PR/MR's cycle
 count or which toolchain wrote earlier cycles. Every new invocation gets a fresh
 budget. Cycle numbers accumulate with no cap. When the third review is still not
 `clean`, end on the first matching signal in the fix workflow's precedence list:
 unresolved findings give `BLOCKERS_REMAIN`, a pushed third-cycle fix gives
 `PUSH_COMPLETE`, and a third review that produced no commit gives
 `MAX_REVIEWS_REACHED`. Without that order one run could end on either signal.
+The single-cycle cap replaces this budget routing after the first review and
+its normal fix workflow. Pre-review aborts and evidence failures retain their
+usual signals.
 
 ## Constraints and authority
 
@@ -238,6 +254,7 @@ at that point is `null`; an empty list is `[]`.
 | Signal | When | `details` keys |
 | --- | --- | --- |
 | `REVIEW_COMPLETE` | A local review returned, or a PR/MR review reached `clean` | `score`, `status`, `review_url` |
+| `CAPPED_REVIEW_COMPLETE` | A capped PR/MR invocation completed its one review and, when needed, its normal fix workflow; no second review runs | `score`, `status`, `review_url`, `commit_shas`, `work_items` |
 | `NO_DIFF` | Nothing to review | `scope` |
 | `EVIDENCE_FAILED` | A reviewer failed the evidence gate twice | `failed_passes` |
 | `QUALITY_FAILURES` | Quality commands still fail after the fix pass; nothing is committed and the fixer's edits stay in the working tree | `score`, `review_url`, `failed_commands` |

@@ -33,10 +33,13 @@ score-gap targeting: every current finding gets a disposition.
 The fixer returns a path and one terminal word. It emits no signal: this
 workflow returns an outcome and the skill emits the run's single terminal signal.
 
-- `COMPLETE` — every finding carries a disposition, every applied repair carries
-  a confirmed mutation check, and the quality commands passed. Continue.
-- `MUTATION_UNPROVEN` — an applied repair (`fixed`, or `partial` where code
-  changed) has an unconfirmed mutation check. Commit nothing and return
+- `COMPLETE` — every finding carries a disposition, every applied code or
+  configuration repair has a confirmed mutation check, every applied text-only
+  repair has a recorded author verification, and the quality commands passed.
+  A cycle with only author-verified text-only repairs commits and continues.
+- `MUTATION_UNPROVEN` — an applied code or configuration repair (`fixed`, or
+  `partial` where code or configuration changed) has an unconfirmed mutation
+  check. Commit nothing and return
   `BLOCKERS_REMAIN` naming those findings: the commit body carries fix evidence,
   so an unproven repair would record a claim nothing tested.
 - `QUALITY_FAILURES` — commit nothing and return `QUALITY_FAILURES` with the
@@ -70,7 +73,8 @@ The commit body records, in order:
 - the raw score and the cycle;
 - every disposition;
 - the quality commands and their results;
-- one mutation check per fix;
+- one mutation check per code or configuration repair;
+- the author verifications for text-only repairs, in a separate section;
 - the work-item records.
 
 ### 5. Push
@@ -98,8 +102,12 @@ record the pushed commit SHAs.
 ### 6. Hand back to the review budget
 
 Return the outcome, the commit SHAs (or an empty list), the work-item records,
-and the disposition counts. The orchestrator routes on the first match, so two
-identical runs cannot end on different signals:
+and the disposition counts. For a caller-declared single-cycle cap, hand back
+after this one fix pass. The orchestrator reports the fix outcome and any
+uncommitted edits in prose, then emits `CAPPED_REVIEW_COMPLETE` with the review
+URL, score, status, fix commit SHAs, and work items; it never starts a second
+review. For the default budget, the orchestrator routes on the first match, so
+two identical runs cannot end on different signals:
 
 1. A finding with no disposition, or outcome `MUTATION_UNPROVEN` —
    `BLOCKERS_REMAIN`, whatever the budget allows.
