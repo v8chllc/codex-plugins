@@ -274,10 +274,12 @@ at that point is `null`; an empty list is `[]`.
 For `CAPPED_REVIEW_COMPLETE`, both `fixer_result` and `workflow_outcome` are
 `null` when a clean review did not run the fixer. Otherwise preserve the fixer's
 exact result separately from the workflow's mapped outcome, using the exhaustive
-mapping in `references/fix-workflow.md`. The three evidence lists are empty on a
-clean fix path. On a `MUTATION_UNPROVEN` fixer result or `QUALITY_FAILURES`,
-populate the applicable finding IDs or commands and list every uncommitted
-repository path left by the fixer.
+mapping in `references/fix-workflow.md`. That mapping gives `partial`,
+`work-item-required`, and missing dispositions precedence over whether the fix
+pass changed files. The three evidence lists are empty on a clean fix path. On a
+`MUTATION_UNPROVEN` fixer result or `QUALITY_FAILURES`, populate the applicable
+finding IDs or commands and list every uncommitted repository path left by the
+fixer.
 
 **Length:** what must survive trimming is the score and status, the Must Fix
 findings, the evidence, any material caveat, and the terminal signal. Lead with
