@@ -171,7 +171,7 @@ def test_single_cycle_budget_is_a_top_level_control() -> None:
     assert "the default budget remains three reviews per invocation" in skill
 
 
-def test_capped_review_runs_fix_once_and_serializes_fixer_outcome() -> None:
+def test_capped_review_runs_fix_once_and_serializes_results() -> None:
     skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
     workflow = (CONSENSUS_REVIEW_DIR / "references/fix-workflow.md").read_text(
         encoding="utf-8"
@@ -188,7 +188,8 @@ def test_capped_review_runs_fix_once_and_serializes_fixer_outcome() -> None:
         "`score`",
         "`status`",
         "`review_url`",
-        "`fixer_outcome`",
+        "`fixer_result`",
+        "`workflow_outcome`",
         "`commit_shas`",
         "`work_items`",
         "`failed_commands`",
@@ -196,9 +197,35 @@ def test_capped_review_runs_fix_once_and_serializes_fixer_outcome() -> None:
         "`uncommitted_paths`",
     ):
         assert key in signal_row
-    for outcome in ("MUTATION_UNPROVEN", "QUALITY_FAILURES"):
-        assert outcome in skill
+    signal_contract = normalized(
+        markdown_section(skill, "For `CAPPED_REVIEW_COMPLETE`")
+    )
+    assert "both `fixer_result` and `workflow_outcome` are `null`" in signal_contract
+    assert "preserve the fixer's exact result separately" in signal_contract
     assert "Empty evidence lists are returned for a clean fix path" in workflow
+
+
+def test_fix_workflow_maps_every_fixer_result_to_a_workflow_outcome() -> None:
+    workflow = (CONSENSUS_REVIEW_DIR / "references/fix-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    handback = normalized(markdown_section(workflow, "### 6. Hand back"))
+    for mapping in (
+        "`COMPLETE` | changes committed and pushed | `COMPLETE`",
+        "`COMPLETE` | no files changed | `NO_CHANGE`",
+        "`MUTATION_UNPROVEN` | any | `BLOCKERS_REMAIN`",
+        "`QUALITY_FAILURES` | any | `QUALITY_FAILURES`",
+        "`COMPLETE` | a finding has no disposition | `BLOCKERS_REMAIN`",
+    ):
+        assert mapping in handback
+    assert (
+        "Return `fixer_result` using only `COMPLETE`, `MUTATION_UNPROVEN`, or "
+        "`QUALITY_FAILURES`"
+    ) in handback
+    assert (
+        "Return `workflow_outcome` using only `COMPLETE`, `NO_CHANGE`, "
+        "`BLOCKERS_REMAIN`, or `QUALITY_FAILURES`"
+    ) in handback
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:
