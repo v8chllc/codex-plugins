@@ -119,6 +119,7 @@ def test_skill_documents_every_terminal_signal() -> None:
     text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
     for signal in (
         "REVIEW_COMPLETE",
+        "REVIEW_COMPLETE_WITH_FINDINGS",
         "CAPPED_REVIEW_COMPLETE",
         "NO_DIFF",
         "EVIDENCE_FAILED",
@@ -134,10 +135,60 @@ def test_skill_documents_every_terminal_signal() -> None:
         "branch_mismatch",
         "platform_auth",
         "post_failed",
+        "command_failed",
         "read_only_role_mutated",
     ):
         assert reason in text
     assert "MAX_CYCLES_REACHED" not in text
+
+
+def test_skill_routes_posting_and_advisory_results_in_order() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    post_or_return = markdown_section(skill, "### 9. Post or return")
+    branch = markdown_section(skill, "### 10. Branch on status")
+
+    assert post_or_return.index("consensus-review-poster") < post_or_return.index(
+        "use that exact result for terminal routing"
+    )
+    post_or_return_normalized = normalized(post_or_return)
+    assert (
+        "A posting failure is `ABORT` with `reason` `post_failed`"
+        in post_or_return_normalized
+    )
+    assert "A local review never fixes" in post_or_return
+    assert "is `ABORT` with `reason` `command_failed`" in post_or_return
+    branch_normalized = normalized(branch)
+    assert "on every cycle" in branch_normalized
+    assert "including when `review_budget: single_cycle`" in branch_normalized
+    assert "Do not call the fixer" in branch_normalized
+
+
+def test_advisory_terminal_signal_carries_required_fields() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    signal_row = skill.split("| `REVIEW_COMPLETE_WITH_FINDINGS` |", maxsplit=1)[
+        1
+    ].split("\n", maxsplit=1)[0]
+    for key in (
+        "`score`",
+        "`status`",
+        "`review_url`",
+        "`reviewed_sha`",
+        "`open_findings`",
+    ):
+        assert key in signal_row
+
+
+def test_poster_uses_the_deterministic_advisory_result() -> None:
+    poster = (CONSENSUS_REVIEW_DIR / "agents/consensus-review-poster.md").read_text(
+        encoding="utf-8"
+    )
+    advisory_command = "review_contract.py advisory"
+    assert advisory_command in poster
+    assert poster.index(advisory_command) < poster.index("Write the summary yourself")
+    poster_normalized = normalized(poster)
+    assert "only when the command in step 2 returned a JSON list" in poster_normalized
+    assert "Do not independently infer the advisory condition" in poster_normalized
+    assert "the exact advisory JSON result from step" in poster_normalized
 
 
 def test_text_only_repairs_have_distinct_author_proof() -> None:

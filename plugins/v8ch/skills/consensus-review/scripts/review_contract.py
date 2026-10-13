@@ -89,6 +89,7 @@ REPORT_STATUS_RE = re.compile(
     re.MULTILINE,
 )
 FINDING_HEADING_RE = re.compile(r"^#### \[(F-\d+)\] \[[A-Z]+\] ", re.MULTILINE)
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 METADATA_BLOCK_RE = re.compile(
     rf"<!--\s*{COMMENT_MARKER}\s*(.*?)\s*-->",
     re.DOTALL,
@@ -178,6 +179,32 @@ def extract_quality_score(report_text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _structural_markdown_lines(report_text: str) -> Iterable[str]:
+    """Yield report lines outside fenced code blocks.
+
+    Review reports can quote example headings in Markdown fences. Those examples
+    are prose evidence, not report structure, and must never affect routing.
+    """
+    fence_character: str | None = None
+    fence_length = 0
+    for line in report_text.splitlines():
+        match = FENCE_RE.match(line)
+        if fence_character is not None:
+            closing_fence = re.compile(
+                rf"^ {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*$"
+            )
+            if closing_fence.match(line):
+                fence_character = None
+                fence_length = 0
+            continue
+        if match:
+            marker = match.group(1)
+            fence_character = marker[0]
+            fence_length = len(marker)
+            continue
+        yield line
+
+
 def advisory_open_findings(
     report_text: str, *, score: int, status: str
 ) -> list[dict[str, str]] | None:
@@ -201,7 +228,7 @@ def advisory_open_findings(
     }
     current_section: str | None = None
     ordered: list[dict[str, str]] = []
-    for line in report_text.splitlines():
+    for line in _structural_markdown_lines(report_text):
         if line.startswith("### "):
             heading = line[4:].strip()
             current_section = heading if heading in sections else None
