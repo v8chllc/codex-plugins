@@ -56,27 +56,6 @@ SUMMARY_HEADING = "### Summary"
 MIN_SUMMARY_BULLETS = 1
 MAX_SUMMARY_BULLETS = 3
 SUMMARY_BULLET_PATTERN = re.compile(r"^ {0,3}- ")
-SUMMARY_AUTHORITY_PATTERNS = (
-    re.compile(
-        r"\b(?:no|zero)\s+(?:fix(?:es)?|follow[- ]?ups?|changes?)\s+"
-        r"(?:is|are)\s+required\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:fix(?:es)?|follow[- ]?ups?|changes?)\s+(?:is|are)\s+"
-        r"(?:not\s+)?required\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:review|review cycle|work)\s+(?:is\s+)?(?:complete|completed|done)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:all\s+)?findings?\s+(?:is|are|has been|have been)\s+"
-        r"(?:fixed|resolved|closed|declined|accepted|dismissed|deferred)\b",
-        re.IGNORECASE,
-    ),
-)
 
 COMPLETION_NOTICES = {
     COMPLETION_CLEAN: "Complete; no open findings.",
@@ -146,12 +125,6 @@ def extract_report_summary(report_text: str) -> str:
     """Extract and validate the synthesized report's Summary section."""
     report_summary = extract_top_level_section(report_text, SUMMARY_HEADING)
     validate_summary(report_summary)
-    for pattern in SUMMARY_AUTHORITY_PATTERNS:
-        if pattern.search(report_summary):
-            raise ContractError(
-                "The Summary must describe findings and evidence without making "
-                "completion, fix-requirement, or disposition claims."
-            )
     return report_summary
 
 

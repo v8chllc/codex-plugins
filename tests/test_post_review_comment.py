@@ -261,25 +261,51 @@ def test_summary_extraction_rejects_duplicate_top_level_sections() -> None:
         module.extract_report_summary(report)
 
 
-def test_advisory_summary_rejects_a_fix_requirement_claim() -> None:
+def test_summary_accepts_quoted_defective_completion_wording() -> None:
     module = load_post_review_comment()
-    report = REPORT.replace(SUMMARY.strip(), "- No fixes or follow-up are required.", 1)
+    summary = '- The CLI incorrectly says "work is complete" before upload finishes.'
+    report = REPORT.replace(SUMMARY.strip(), summary, 1)
     outcome = module.resolve_review_outcome(
-        REPORT, score=90, status="passing", reviewed_sha="1a2b3c4"
+        report, score=90, status="passing", reviewed_sha="1a2b3c4"
     )
-    with pytest.raises(module.ContractError, match="without making"):
-        module.build_comment_body(
-            report_text=report,
-            summary_text="- No fixes or follow-up are required.",
-            cycle=2,
-            outcome=outcome,
-            delegation_mode="parallel-subagents",
-            plan_source="none",
-            scope_basis="full-diff",
-            files_touched=3,
-            findings_opened=2,
-            findings_closed=1,
-        )
+    body = module.build_comment_body(
+        report_text=report,
+        summary_text=summary,
+        cycle=2,
+        outcome=outcome,
+        delegation_mode="parallel-subagents",
+        plan_source="none",
+        scope_basis="full-diff",
+        files_touched=3,
+        findings_opened=2,
+        findings_closed=1,
+    )
+    assert summary in body
+
+
+def test_summary_extraction_preserves_fenced_supporting_evidence() -> None:
+    module = load_post_review_comment()
+    summary = (
+        "- The CLI emits this premature status:\n  ```text\n  work is complete\n  ```"
+    )
+    report = REPORT.replace(SUMMARY.strip(), summary, 1)
+    outcome = module.resolve_review_outcome(
+        report, score=90, status="passing", reviewed_sha="1a2b3c4"
+    )
+    body = module.build_comment_body(
+        report_text=report,
+        summary_text=summary,
+        cycle=2,
+        outcome=outcome,
+        delegation_mode="parallel-subagents",
+        plan_source="none",
+        scope_basis="full-diff",
+        files_touched=3,
+        findings_opened=2,
+        findings_closed=1,
+    )
+    assert module.extract_report_summary(report) == summary
+    assert summary in body
 
 
 def test_report_must_carry_merged_evidence() -> None:

@@ -223,12 +223,12 @@ def status_label(status: str) -> str:
         raise ContractError(f"Unknown status '{status}'.") from None
 
 
-def _top_level_lines(report_text: str) -> list[str]:
-    """Return lines outside fenced code blocks, rejecting an unclosed fence."""
-    lines: list[str] = []
+def _top_level_indexed_lines(report_text: str) -> list[tuple[int, str]]:
+    """Return indexed lines outside fences, rejecting an unclosed fence."""
+    indexed_lines: list[tuple[int, str]] = []
     fence_character: str | None = None
     fence_length = 0
-    for line in report_text.splitlines():
+    for index, line in enumerate(report_text.splitlines()):
         if fence_character is not None:
             fence_match = re.match(r"^ {0,3}(`+|~+)[ \t]*$", line)
             if (
@@ -244,17 +244,23 @@ def _top_level_lines(report_text: str) -> list[str]:
             fence_character = fence_match.group(1)[0]
             fence_length = len(fence_match.group(1))
             continue
-        lines.append(line)
+        indexed_lines.append((index, line))
     if fence_character is not None:
         raise ContractError("The report contains an unclosed fenced code block.")
-    return lines
+    return indexed_lines
+
+
+def _top_level_lines(report_text: str) -> list[str]:
+    """Return lines outside fenced code blocks, rejecting an unclosed fence."""
+    return [line for _, line in _top_level_indexed_lines(report_text)]
 
 
 def extract_top_level_section(report_text: str, heading: str) -> str:
-    """Return one top-level Markdown section, excluding fenced examples."""
-    top_level_lines = _top_level_lines(report_text)
+    """Return one top-level section with its original fenced content intact."""
+    source_lines = report_text.splitlines()
+    indexed_lines = _top_level_indexed_lines(report_text)
     heading_indexes = [
-        index for index, line in enumerate(top_level_lines) if line.strip() == heading
+        index for index, line in indexed_lines if line.strip() == heading
     ]
     if len(heading_indexes) != 1:
         section_name = heading.removeprefix("### ")
@@ -262,12 +268,14 @@ def extract_top_level_section(report_text: str, heading: str) -> str:
             f"The report must contain exactly one {section_name} section."
         )
 
-    section_lines: list[str] = []
-    for line in top_level_lines[heading_indexes[0] + 1 :]:
+    section_end = len(source_lines)
+    for index, line in indexed_lines:
+        if index <= heading_indexes[0]:
+            continue
         if line.startswith("### "):
+            section_end = index
             break
-        section_lines.append(line)
-    return "\n".join(section_lines).strip()
+    return "\n".join(source_lines[heading_indexes[0] + 1 : section_end]).strip()
 
 
 def open_findings(report_text: str) -> list[dict[str, str]]:
