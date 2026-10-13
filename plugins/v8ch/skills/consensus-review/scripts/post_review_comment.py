@@ -19,6 +19,7 @@ docstring.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -50,8 +51,10 @@ STATUS_EMOJI = {
 
 TEMPLATE_NAME = "review-comment.md.tmpl"
 EVIDENCE_HEADING = "### Evidence"
+SUMMARY_HEADING = "### Summary"
 MIN_SUMMARY_BULLETS = 1
 MAX_SUMMARY_BULLETS = 3
+SUMMARY_BULLET_PATTERN = re.compile(r"^ {0,3}- ")
 
 COMPLETION_NOTICES = {
     COMPLETION_CLEAN: "Complete; no open findings.",
@@ -95,23 +98,65 @@ def read_required_text(path: str | Path, *, label: str) -> str:
 
 
 def validate_summary(summary_text: str) -> str:
-    """Validate the one-to-three bullet summary authored by the poster role."""
-    lines = [line.strip() for line in summary_text.splitlines() if line.strip()]
-    if not all(line.startswith("- ") for line in lines):
-        raise ContractError("Every summary line must be a markdown bullet ('- ').")
-    if not MIN_SUMMARY_BULLETS <= len(lines) <= MAX_SUMMARY_BULLETS:
+    """Validate a one-to-three bullet synthesized summary."""
+    summary = summary_text.strip()
+    lines = summary.splitlines()
+    bullet_count = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        if SUMMARY_BULLET_PATTERN.match(line):
+            bullet_count += 1
+        elif not line[:1].isspace():
+            raise ContractError(
+                "Every summary paragraph must be a markdown bullet ('- ') or an "
+                "indented continuation line."
+            )
+    if not MIN_SUMMARY_BULLETS <= bullet_count <= MAX_SUMMARY_BULLETS:
         raise ContractError(
             f"The summary must hold {MIN_SUMMARY_BULLETS} to {MAX_SUMMARY_BULLETS} "
-            f"bullets, got {len(lines)}."
+            f"bullets, got {bullet_count}."
         )
-    return "\n".join(lines)
+    return summary
+
+
+def extract_report_summary(report_text: str) -> str:
+    """Extract and validate the synthesized report's Summary section."""
+    lines = report_text.splitlines()
+    try:
+        heading_index = lines.index(SUMMARY_HEADING)
+    except ValueError as error:
+        raise ContractError(
+            "The report is missing its '### Summary' section."
+        ) from error
+
+    section_lines: list[str] = []
+    for line in lines[heading_index + 1 :]:
+        if line.startswith("### "):
+            break
+        section_lines.append(line)
+    report_summary = "\n".join(section_lines).strip()
+    validate_summary(report_summary)
+    return report_summary
+
+
+def validate_summary_copy(report_text: str, summary_text: str) -> str:
+    """Require the poster's summary file to preserve the synthesized summary."""
+    report_summary = extract_report_summary(report_text)
+    validate_summary(summary_text)
+    if summary_text.strip() != report_summary:
+        raise ContractError(
+            "The summary file must copy the report's '### Summary' bullets verbatim."
+        )
+    return report_summary
 
 
 def render_summary(summary_text: str, *, completion_kind: str) -> str:
-    """Render authoritative completion state above the poster-authored summary."""
+    """Render authoritative completion state above the synthesized summary."""
+    validate_summary(summary_text)
     return (
         f"**Resolved completion:** {COMPLETION_NOTICES[completion_kind]}\n\n"
-        f"{validate_summary(summary_text)}"
+        f"{summary_text}"
     )
 
 
@@ -170,6 +215,7 @@ def build_comment_body(
 ) -> str:
     """Build the full review comment, metadata block first."""
     validate_report(report_text)
+    summary_text = validate_summary_copy(report_text, summary_text)
     resolved = resolve_review_outcome(
         report_text,
         score=outcome.score,

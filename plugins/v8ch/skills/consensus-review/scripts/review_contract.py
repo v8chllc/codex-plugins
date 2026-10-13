@@ -620,6 +620,25 @@ def completion_signal(
     return None
 
 
+def dispatch_after_post(
+    outcome: ReviewOutcome,
+    *,
+    cycle: int,
+    review_url: str | None,
+    post_succeeded: bool,
+) -> dict[str, Any]:
+    """Return the single route the orchestration prompt must follow."""
+    signal = completion_signal(
+        outcome,
+        cycle=cycle,
+        review_url=review_url,
+        post_succeeded=post_succeeded,
+    )
+    if signal is None:
+        return {"dispatch": "invoke_fixer"}
+    return {"dispatch": "terminal_signal", "terminal_signal": signal}
+
+
 def _require_int(value: object, *, key: str, minimum: int, maximum: int | None) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ContractError(f"Metadata '{key}' must be an integer, got {value!r}.")
@@ -853,13 +872,13 @@ def main(argv: list[str] | None = None) -> int:
             write_json(args.output, serialize_outcome(outcome))
         else:
             outcome = read_outcome(args.outcome_file)
-            signal = completion_signal(
+            dispatch = dispatch_after_post(
                 outcome,
                 cycle=args.cycle,
                 review_url=args.review_url,
                 post_succeeded=not args.post_failed,
             )
-            write_json(args.output, signal)
+            write_json(args.output, dispatch)
     except (ContractError, OSError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

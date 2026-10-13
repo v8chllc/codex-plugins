@@ -198,7 +198,10 @@ uv run <skill-dir>/scripts/review_contract.py resolve \
 
 The command validates the report's score, status, and ordered findings. A
 nonzero exit is `ABORT` with reason `contract_failed`; post nothing. Preserve
-the outcome artifact unchanged. Pass it and the report to
+the outcome artifact unchanged. It is the sole source for completion state,
+status branch, reviewed SHA, and findings. The synthesizer authors the Summary;
+the poster copies it verbatim, and the posting script renders the completion
+state above it. Pass the artifact and report to
 `consensus-review-poster` once with the PR/MR number, cycle, delegation mode,
 plan source, scope basis, blast-radius counts, repository directory, and skill
 directory. Capture the returned comment URL on success.
@@ -215,14 +218,15 @@ uv run <skill-dir>/scripts/review_contract.py signal \
   --output <signal-path>
 ```
 
-If posting failed, omit `--review-url` and pass `--post-failed`. Emit the JSON
-object from the signal file when it is non-null. A failed post returns `ABORT`.
-A successful `clean` result returns `REVIEW_COMPLETE`; a successful advisory
-result returns `REVIEW_COMPLETE_WITH_FINDINGS` with the exact reviewed SHA and
-ordered findings from the posted report. The caller dispositions those findings.
-Do not invoke the fixer for either completion result. A null signal routes a
-`passing` or `failing` review to `references/fix-workflow.md`, then review again
-if the budget allows.
+If posting failed, omit `--review-url` and pass `--post-failed`. Read the
+`dispatch` field from the JSON object written to the signal file and follow
+that route without deriving it independently.
+
+- For `terminal_signal`, emit the nested `terminal_signal` object and stop. It
+  is `ABORT`, `REVIEW_COMPLETE`, or `REVIEW_COMPLETE_WITH_FINDINGS`, with ordered
+  findings and the exact reviewed SHA where applicable. Do not invoke the fixer.
+- For `invoke_fixer`, run `references/fix-workflow.md`, then review again if the
+  budget allows.
 
 **Budget:** at most three reviews per invocation, whatever the PR/MR's cycle
 count or which toolchain wrote earlier cycles. Every new invocation gets a fresh

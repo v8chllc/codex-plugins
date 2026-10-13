@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.consensus_review_support import CONSENSUS_REVIEW_DIR, SCRIPTS_DIR
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CONSENSUS_REVIEW_DIR = REPO_ROOT / "plugins/v8ch/skills/consensus-review"
+SCRIPTS_DIR = CONSENSUS_REVIEW_DIR / "scripts"
 
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -87,10 +89,9 @@ def test_advisory_journey_posts_once_and_returns_full_signal_without_fixer(
     report_path = tmp_path / "report.md"
     outcome_path = tmp_path / "outcome.json"
     summary_path = tmp_path / "summary.md"
-    signal_path = tmp_path / "signal.json"
     report_path.write_text(report, encoding="utf-8")
     summary_path.write_text(
-        "- F-1 has a demonstrated cost in src/widget.py.\n", encoding="utf-8"
+        "- Open findings affect widget behavior.\n", encoding="utf-8"
     )
 
     subprocess.run(
@@ -167,6 +168,7 @@ def test_advisory_journey_posts_once_and_returns_full_signal_without_fixer(
     assert "Complete with advisory findings for caller disposition." in posted_body
     assert report.strip() in posted_body
 
+    dispatch_path = tmp_path / "dispatch.json"
     subprocess.run(
         [
             sys.executable,
@@ -179,27 +181,28 @@ def test_advisory_journey_posts_once_and_returns_full_signal_without_fixer(
             "--review-url",
             REVIEW_URL,
             "--output",
-            str(signal_path),
+            str(dispatch_path),
         ],
         check=True,
     )
-    signal = json.loads(signal_path.read_text(encoding="utf-8"))
-    assert signal == {
-        "signal": "REVIEW_COMPLETE_WITH_FINDINGS",
-        "cycle": cycle,
-        "details": {
-            "score": score,
-            "status": "passing",
-            "review_url": REVIEW_URL,
-            "reviewed_sha": REVIEWED_SHA,
-            "open_findings": list(outcome.findings),
+    dispatch = json.loads(dispatch_path.read_text(encoding="utf-8"))
+    assert dispatch == {
+        "dispatch": "terminal_signal",
+        "terminal_signal": {
+            "signal": "REVIEW_COMPLETE_WITH_FINDINGS",
+            "cycle": cycle,
+            "details": {
+                "score": score,
+                "status": "passing",
+                "review_url": REVIEW_URL,
+                "reviewed_sha": REVIEWED_SHA,
+                "open_findings": list(outcome.findings),
+            },
         },
     }
-    fixer_calls: list[str] = []
-    if signal is None:
-        fixer_calls.append("fixer")
-    assert fixer_calls == []
-    # The skill routes a non-null completion signal directly to its stop rule.
+    # The skill consumes the command's route directly.
     skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
-    assert "object from the signal file when it is non-null" in skill
+    assert "follow that route without deriving it independently" in " ".join(
+        skill.split()
+    )
     assert "Do not invoke the fixer" in skill

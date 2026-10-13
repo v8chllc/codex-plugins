@@ -157,12 +157,12 @@ def test_poster_summary_leaves_completion_disposition_to_script() -> None:
     text = (CONSENSUS_REVIEW_DIR / "agents/consensus-review-poster.md").read_text(
         encoding="utf-8"
     )
-    assert "Summary and Evidence sections" in text
-    assert "Do not state or translate the resolved status" in text
+    assert "Summary` bullets" in text
+    assert "verbatim" in text
+    assert "rejects" in text
     assert "sole completion disposition deterministically" in text
     assert "caller will" not in text
     assert "--outcome-file" in text
-    assert "completion_kind" in text
 
 
 def test_fix_workflow_posts_no_comment_and_invokes_no_skill() -> None:
