@@ -1137,6 +1137,12 @@ def test_posted_advisory_branch_precedes_the_fixer() -> None:
     assert "You author the Summary bullets; the poster copies them verbatim" in (
         " ".join(synthesizer.split())
     )
+    assert "Limit Summary bullets to findings and supporting evidence" in (
+        " ".join(synthesizer.split())
+    )
+    assert "fixes or follow-up are or are not required" in (
+        " ".join(synthesizer.split())
+    )
     assert "The synthesizer authors the Summary; the poster copies it verbatim" in (
         " ".join(skill.split())
     )

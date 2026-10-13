@@ -76,8 +76,11 @@ exclusive:
 A `passing` score of at least 95 with no Must Fix and open Should Fix findings
 keeps the `passing` status. The mechanical contract returns `completion_kind`
 `advisory`. You author the Summary bullets; the poster copies them verbatim,
-and the posting script renders the completion disposition above them. The
-report keeps every Latent finding so the caller can disposition it too.
+and the posting script renders the completion disposition above them. Limit
+Summary bullets to findings and supporting evidence. Do not claim that the
+review or work is complete, that fixes or follow-up are or are not required, or
+that any finding has been dispositioned. The report keeps every Latent finding
+so the caller can disposition it too.
 
 ### 5. Use history only to close findings
 
@@ -108,7 +111,8 @@ block anywhere in the report; the publishing script rejects one.
    `Delegation: <parallel-subagents | sequential-fallback>. Plan: <none | supplied: source>.`
 3. `### Evidence` — the merged, deduplicated `Files examined` and `Commands run`
    from all three reviewers.
-4. `### Summary` — one to three bullets.
+4. `### Summary` — one to three bullets limited to findings and evidence, with
+   no completion, fix-requirement, follow-up, or disposition claims.
 5. `### Must Fix`
 6. `### Should Fix`
 7. `### Latent Findings` — each carrying an `**Invariant:**` field.

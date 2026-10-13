@@ -250,6 +250,26 @@ def _top_level_lines(report_text: str) -> list[str]:
     return lines
 
 
+def extract_top_level_section(report_text: str, heading: str) -> str:
+    """Return one top-level Markdown section, excluding fenced examples."""
+    top_level_lines = _top_level_lines(report_text)
+    heading_indexes = [
+        index for index, line in enumerate(top_level_lines) if line.strip() == heading
+    ]
+    if len(heading_indexes) != 1:
+        section_name = heading.removeprefix("### ")
+        raise ContractError(
+            f"The report must contain exactly one {section_name} section."
+        )
+
+    section_lines: list[str] = []
+    for line in top_level_lines[heading_indexes[0] + 1 :]:
+        if line.startswith("### "):
+            break
+        section_lines.append(line)
+    return "\n".join(section_lines).strip()
+
+
 def open_findings(report_text: str) -> list[dict[str, str]]:
     """Read and validate top-level findings in report order."""
     section: str | None = None
