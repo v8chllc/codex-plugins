@@ -89,7 +89,7 @@ REPORT_STATUS_RE = re.compile(
     re.MULTILINE,
 )
 FINDING_HEADING_RE = re.compile(r"^#### \[(F-\d+)\] \[[A-Z]+\] ", re.MULTILINE)
-FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 METADATA_BLOCK_RE = re.compile(
     rf"<!--\s*{COMMENT_MARKER}\s*(.*?)\s*-->",
     re.DOTALL,
@@ -182,13 +182,11 @@ def extract_quality_score(report_text: str) -> int | None:
 def _structural_markdown_lines(report_text: str) -> Iterable[str]:
     """Yield report lines outside fenced code blocks.
 
-    Review reports can quote example headings in Markdown fences. Those examples
-    are prose evidence, not report structure, and must never affect routing.
+    Quoted finding headings are report evidence, not advisory routing input.
     """
     fence_character: str | None = None
     fence_length = 0
     for line in report_text.splitlines():
-        match = FENCE_RE.match(line)
         if fence_character is not None:
             closing_fence = re.compile(
                 rf"^ {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*$"
@@ -197,11 +195,13 @@ def _structural_markdown_lines(report_text: str) -> Iterable[str]:
                 fence_character = None
                 fence_length = 0
             continue
-        if match:
-            marker = match.group(1)
-            fence_character = marker[0]
-            fence_length = len(marker)
-            continue
+        match = FENCE_OPEN_RE.match(line)
+        if match is not None:
+            marker, info = match.groups()
+            if marker[0] == "~" or "`" not in info:
+                fence_character = marker[0]
+                fence_length = len(marker)
+                continue
         yield line
 
 
