@@ -36,6 +36,7 @@ DOCUMENTED_COMMAND_BLOCKS = [
 EXPECTED_PROFILE = {
     "tracking": "required",
     "merge_method": "rebase",
+    "review_capability": "coderabbit",
     "quality_commands": QUALITY_COMMANDS,
     "release_steps": [
         "whenever a file under plugins/<name>/ changes, bump the version in "
