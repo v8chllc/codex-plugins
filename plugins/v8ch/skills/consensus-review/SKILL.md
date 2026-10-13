@@ -199,8 +199,10 @@ the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
 counts, the repository directory, and the absolute skill directory. A posting
 failure is `ABORT` with `reason` `post_failed`.
 
-After the poster reports a successful post and its comment URL, inspect the
-exact report file it posted with:
+After the poster reports a successful post, its comment URL, and its advisory
+JSON result, use that exact result for terminal routing. If the poster does not
+return the result, rerun the same command against the exact report file it
+posted:
 
 ```bash
 uv run python <skill-dir>/scripts/review_contract.py advisory \
@@ -210,7 +212,8 @@ uv run python <skill-dir>/scripts/review_contract.py advisory \
 The command prints an ordered JSON list of numbered open `Should Fix` and
 `Latent Findings` entries when the advisory stop applies, or `null` otherwise.
 Each entry has only `id` and `section`; the posted report supplies finding
-details. A nonzero exit is `ABORT` with `reason` `command_failed`. The score and
+details. A nonzero exit, whether the poster ran it before posting or the skill
+reran it after posting, is `ABORT` with `reason` `command_failed`. The score and
 status must match the report and posted metadata. Use the reviewed SHA supplied
 to the poster and its successful post URL in the signal; never infer either from
 another cycle.

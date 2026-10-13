@@ -198,6 +198,34 @@ def test_advisory_handoff_requires_score_and_status_to_match_report() -> None:
         contract.advisory_open_findings(report, score=96, status="clean")
 
 
+def test_advisory_handoff_ignores_fenced_report_structure() -> None:
+    report = (
+        "### Quality Score: 96/100 — Passing\n\n"
+        "### Must Fix\n\nNone.\n\n"
+        "### Should Fix\n\n#### [F-1] [LOW] real finding\n\n"
+        "```markdown\n"
+        "### Must Fix\n\n#### [F-99] [CRITICAL] example blocker\n"
+        "```\n\n"
+        "### Latent Findings\n\nNone.\n"
+    )
+    assert contract.advisory_open_findings(report, score=96, status="passing") == [
+        {"id": "F-1", "section": "Should Fix"}
+    ]
+
+
+def test_advisory_handoff_ignores_fenced_finding_headings() -> None:
+    report = (
+        "### Quality Score: 96/100 — Passing\n\n"
+        "### Must Fix\n\nNone.\n\n"
+        "### Should Fix\n\n#### [F-1] [LOW] real finding\n\n"
+        "~~~markdown\n#### [F-88] [LOW] example finding\n~~~\n\n"
+        "### Latent Findings\n\nNone.\n"
+    )
+    assert contract.advisory_open_findings(report, score=96, status="passing") == [
+        {"id": "F-1", "section": "Should Fix"}
+    ]
+
+
 def test_advisory_cli_emits_the_compact_handoff(tmp_path: Path) -> None:
     report_file = tmp_path / "report.md"
     report_file.write_text(advisory_report(96, "Passing"), encoding="utf-8")
@@ -221,6 +249,53 @@ def test_advisory_cli_emits_the_compact_handoff(tmp_path: Path) -> None:
         {"id": "F-1", "section": "Should Fix"},
         {"id": "F-2", "section": "Latent Findings"},
     ]
+
+
+def test_advisory_cli_rejects_a_missing_report(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "review_contract.py"),
+            "advisory",
+            "--report-file",
+            str(tmp_path / "missing.md"),
+            "--score",
+            "96",
+            "--status",
+            "passing",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "Error:" in result.stderr
+    assert "No such file or directory" in result.stderr
+    assert result.stdout == ""
+
+
+def test_advisory_cli_rejects_a_score_status_mismatch(tmp_path: Path) -> None:
+    report_file = tmp_path / "report.md"
+    report_file.write_text(advisory_report(96, "Passing"), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "review_contract.py"),
+            "advisory",
+            "--report-file",
+            str(report_file),
+            "--score",
+            "95",
+            "--status",
+            "clean",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stderr == "Error: The report score and review metadata disagree.\n"
+    assert result.stdout == ""
 
 
 def test_valid_metadata_fixture_passes_validation() -> None:

@@ -16,16 +16,25 @@ directory; and the absolute path of the consensus-review skill directory.
 
 1. **Stop without posting if the report has no `### Quality Score:` heading.**
    Report that and stop; do not compose a substitute.
-2. **Write the summary yourself:** one to three bullets drawn from the report's
-   Summary section, naming the highest-severity finding and the status. For a
-   `passing` report at 95 or above with open `Should Fix` findings and no open
-   `Must Fix`, say that the caller will disposition those findings. Do not
-   promise an automatic fix cycle or claim no fixes are needed. Nothing else in
-   the comment is yours to write.
-3. **Do not alter the findings, the score, or the status.** They are decided by
+2. **Inspect the exact report before writing the summary:** write the report
+   verbatim to its scratch file, then run:
+
+   ```bash
+   uv run python <skill-dir>/scripts/review_contract.py advisory \
+     --report-file <report-path> --score <score> --status <status>
+   ```
+
+   Stop without posting and pass through the command error when it exits
+   nonzero. Preserve its exact JSON result for the caller.
+3. **Write the summary yourself:** one to three bullets drawn from the report's
+   Summary section, naming the highest-severity finding and the status. Add the
+   sentence that the caller will disposition the advisory findings only when
+   the command in step 2 returned a JSON list. Do not independently infer the
+   advisory condition from report prose, promise an automatic fix cycle, or
+   claim no fixes are needed. Nothing else in the comment is yours to write.
+4. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
-4. **Write two scratch files** outside the repository — one holding the report
-   verbatim, one holding the summary bullets — then post with:
+5. **Write the summary scratch file** outside the repository, then post with:
 
    ```bash
    uv run <skill-dir>/scripts/post_review_comment.py \
@@ -60,7 +69,8 @@ absolute path, a home-directory path, or an untracked scratch file.
 
 ## Output and stop rule
 
-On success, report the comment URL and stop.
+On success, report the comment URL and the exact advisory JSON result from step
+2, then stop.
 
 On failure, report the exact error from the script and stop. Do not retry with
 different inputs.
