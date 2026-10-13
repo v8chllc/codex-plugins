@@ -17,8 +17,11 @@ directory; and the absolute path of the consensus-review skill directory.
 1. **Stop without posting if the report has no `### Quality Score:` heading.**
    Report that and stop; do not compose a substitute.
 2. **Write the summary yourself:** one to three bullets drawn from the report's
-   Summary section, naming the highest-severity finding and the status. Nothing
-   else in the comment is yours to write.
+   Summary section, naming the highest-severity finding and the status. For a
+   `passing` report at 95 or above with open `Should Fix` findings and no open
+   `Must Fix`, say that the caller will disposition those findings. Do not
+   promise an automatic fix cycle or claim no fixes are needed. Nothing else in
+   the comment is yours to write.
 3. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
 4. **Write two scratch files** outside the repository — one holding the report
