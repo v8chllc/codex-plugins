@@ -185,6 +185,32 @@ def workflow_step_block(heading: str, number: str) -> str:
     return block
 
 
+def test_session_recommendation_routes_procedural_approvals_to_write() -> None:
+    step = normalized(workflow_step_block("## Workflow H: Recommend Session", "8"))
+
+    assert "For procedural approvals, continue through Workflow J." in step
+    assert "## Workflow J: Procedural Write" in workflow_block(
+        "## Workflow J: Procedural Write"
+    )
+
+
+def test_procedural_recommendation_names_write_workflow() -> None:
+    step = normalized(workflow_step_block("## Workflow I: Recommend Procedural", "8"))
+
+    assert "Apply only approved changes (Workflow J)." in step
+    assert "## Workflow J: Procedural Write" in workflow_block(
+        "## Workflow J: Procedural Write"
+    )
+
+
+def test_session_recommendation_keeps_journal_write_range() -> None:
+    step = normalized(workflow_step_block("## Workflow H: Recommend Session", "2"))
+
+    assert "Workflow E steps 2–6" in step
+    for number in range(2, 7):
+        assert workflow_step_block("## Workflow E: Session Synthesis", str(number))
+
+
 def review_step_block(number: str) -> str:
     return workflow_step_block(REVIEW_HEADING, number)
 
