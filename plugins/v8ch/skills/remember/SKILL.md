@@ -356,7 +356,7 @@ Invoked by the `recommend` skill (`/recommend session`).
    Apply the Evidence source and untrusted-data contract in
    `references/types.md`. Do not present an unrun command as a result.
 7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
-8. Apply only approved changes. For curated approvals, continue through Workflow C. For procedural approvals, continue through Workflow I.
+8. Apply only approved changes. For curated approvals, continue through Workflow C. For procedural approvals, continue through Workflow J.
 9. Before applying approved curated or procedural changes, run validation:
    Run the resolved `scripts/validate_memory.py` with
    `--root . --toolchain codex`.
@@ -377,7 +377,7 @@ Invoked by the `recommend` skill (`/recommend procedural`).
 5. Read existing guidance in each resolved target file.
 6. Classify candidates as `add`, `update`, or `skip` against the file's current content.
 7. Propose a concise patch per target. Present for user review.
-8. Apply only approved changes (Workflow I).
+8. Apply only approved changes (Workflow J).
 9. Before applying approved procedural changes, run validation:
    Run the resolved `scripts/validate_memory.py` with
    `--root . --toolchain codex`.
