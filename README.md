@@ -37,6 +37,12 @@ install the `v8ch` plugin.
 
 ## Development
 
+Use mise as the tool-version manager. Install the pinned Node release first:
+
+```sh
+mise install
+```
+
 Install the locked Python and Node development dependencies:
 
 ```sh
