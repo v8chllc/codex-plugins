@@ -110,4 +110,3 @@ Before appending:
 - Keep metadata in HTML comments so the journal remains readable as plain Markdown.
 
 ---
-
