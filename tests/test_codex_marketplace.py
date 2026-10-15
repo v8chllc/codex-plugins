@@ -131,12 +131,15 @@ def test_remember_skill_uses_manual_load_and_explicit_setup() -> None:
     assert "<remember-skill-dir>" not in skill_text
 
 
-def test_recommend_resolves_the_remember_validator_from_the_skill_catalog() -> None:
-    skill_path = REPO_ROOT / "plugins/v8ch/skills/recommend/SKILL.md"
-    skill_text = skill_path.read_text(encoding="utf-8")
-
-    assert "`v8ch:remember`" in skill_text
-    assert "available-skills catalog" in skill_text
-    assert "resolve `scripts/validate_memory.py` against the directory" in skill_text
-    assert "resulting absolute path to Python" in skill_text
-    assert "../remember/scripts/validate_memory.py" not in skill_text
+def test_both_memory_skills_resolve_shared_validator_from_own_catalog_path() -> None:
+    plugin_root = REPO_ROOT / "plugins/v8ch"
+    for skill in ("remember", "recommend"):
+        skill_path = plugin_root / "skills" / skill / "SKILL.md"
+        skill_text = skill_path.read_text(encoding="utf-8")
+        assert "memory/scripts/validate_memory.py" in skill_text
+        assert "ascend twice" in skill_text
+        assert (
+            skill_path.parent.parent.parent / "memory/scripts/validate_memory.py"
+        ).is_file()
+    recommend = (plugin_root / "skills/recommend/SKILL.md").read_text(encoding="utf-8")
+    assert "../remember/" not in recommend

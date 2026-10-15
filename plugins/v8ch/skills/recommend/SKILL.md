@@ -7,15 +7,15 @@ description: "Recommend and apply memory updates from the current session. Use w
 
 Routes `/recommend` commands to memory recommendation workflows.
 
-See `../remember/references/types.md` for curated memory entry templates.
-See `../remember/references/procedural-targets.md` for approved procedural write targets.
-See `../remember/references/journal-format.md` for journal entry format and dedupe marker spec.
-Use the `v8ch:remember` skill's `scripts/validate_memory.py` as a validation
-preflight before applying any approved memory changes. Codex lists each installed
-skill's `SKILL.md` path in the available-skills catalog. Find the `v8ch:remember`
-entry, resolve `scripts/validate_memory.py` against the directory containing its
-`SKILL.md`, and pass the resulting absolute path to Python. Do not invoke the
-validator through a repository-relative or current-skill-relative path.
+Use `memory/references/types.md` for curated templates and evidence rules,
+`memory/references/procedural-targets.md` for the approved procedural targets,
+`memory/references/journal-format.md` for daily journal format and dedupe,
+`memory/references/recording.md` for approved writes, and
+`memory/scripts/validate_memory.py` for validation preflight. Resolve these
+resources from this skill's catalog-listed `SKILL.md`: ascend twice from its
+directory to the plugin root, then resolve `memory/<resource>` there. Pass the
+resulting absolute validator path to Python. Do not resolve Remember's skill or
+its internal workflow steps.
 
 ---
 
@@ -47,18 +47,17 @@ Triggered by `/recommend curated`.
    when available checkable provenance supports the claim. Never invent it;
    missing evidence does not block the recommendation. Keep existing evidence
    on an update only while it supports the revised claim. Apply the Evidence
-   source and untrusted-data contract in `../remember/references/types.md`.
+   source and untrusted-data contract in `memory/references/types.md`.
    Do not present an unrun command as a result.
 6. Present recommendations only; do not write automatically.
-7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `../remember/references/types.md`.
+7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `memory/references/types.md`.
 8. Ask which to apply.
 9. Before writing approved entries, run the resolved validator with
    `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
-10. Apply each approved entry: check `.remember/MEMORY.md` for an existing entry
-    with the same name or subject; if found, update in place, otherwise append
-    under the correct `## <type>` section.
+10. Apply each approved entry through `memory/references/recording.md`:
+    dedupe by name or subject, update in place, or append under the right section.
 
 ---
 
@@ -68,27 +67,30 @@ Triggered by `/recommend session`.
 
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first.
-2. Write a journal entry for this session to `.remember/memory/YYYY-MM-DD.md`. Compute a best-effort `session_hash` from available context; if an entry with that hash already exists in today's file, skip silently. See `../remember/references/journal-format.md` for format and hash approach.
+2. Capture this session in `.remember/memory/YYYY-MM-DD.md` using
+   `memory/references/recording.md` and `memory/references/journal-format.md`.
+   Compute a best-effort `session_hash` from available context; on a retry,
+   scan dated journals and reuse a matching entry.
 3. Internally read `.remember/MEMORY.md`, the captured journal entry, and full
    session context for recommendation quality. Do not present this as a
    user-facing manual load operation.
 4. Identify curated candidates (entity, decision, error, preference; todos are recorded with `$remember todo`, not recommended) and procedural candidates (workflow lessons, coding/arch standards, skill/tool routines).
-5. Resolve each procedural candidate to an approved target from `../remember/references/procedural-targets.md`. If no target fits, mark as unsupported.
+5. Resolve each procedural candidate to an approved target from `memory/references/procedural-targets.md`. If no target fits, mark as unsupported.
 6. Dedupe curated candidates against `.remember/MEMORY.md`; dedupe procedural candidates against their respective target files.
    For decision and error adds or updates, include optional `Evidence` only
    when available checkable provenance supports the claim. Never invent it;
    missing evidence does not block the recommendation. Keep existing evidence
    on an update only while it supports the revised claim. Apply the Evidence
-   source and untrusted-data contract in `../remember/references/types.md`.
+   source and untrusted-data contract in `memory/references/types.md`.
    Do not present an unrun command as a result.
-7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
+7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note. Ask which to apply.
 8. Before applying approved changes, run the resolved validator with
    `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
-9. Apply only approved changes:
-   - Curated: check `.remember/MEMORY.md` for an existing entry with the same name or subject; update in place if found, otherwise append under the correct `## <type>` section.
-   - Procedural: write only to files listed in `../remember/references/procedural-targets.md`.
+9. Apply only approved changes through `memory/references/recording.md`:
+   - Curated: dedupe by name or subject; update in place or append under the right section.
+   - Procedural: write only to files listed in `memory/references/procedural-targets.md`.
 
 ---
 
@@ -102,7 +104,7 @@ Triggered by `/recommend procedural`.
    journal file if present for recommendation quality. Do not present this as a
    user-facing manual load operation.
 3. Identify procedural candidates only: workflow lessons, coding/arch standards, skill/tool routines.
-4. Resolve each to an approved target from `../remember/references/procedural-targets.md`. If no target fits, mark as unsupported; do not write elsewhere.
+4. Resolve each to an approved target from `memory/references/procedural-targets.md`. If no target fits, mark as unsupported; do not write elsewhere.
 5. Read existing guidance in each resolved target file.
 6. Classify candidates as `add`, `update`, or `skip` against the file's current content.
 7. Propose a concise patch per target. Present for user review.
@@ -110,6 +112,7 @@ Triggered by `/recommend procedural`.
    `--root . --toolchain codex`.
    If validation fails, report the issues and do not write unless the user
    explicitly confirms proceeding despite the malformed memory state.
-9. Apply only approved changes. Write only to files listed in `../remember/references/procedural-targets.md`.
+9. Apply only approved changes through `memory/references/recording.md`.
+   Write only to files listed in `memory/references/procedural-targets.md`.
 
 $ARGUMENTS

@@ -9,8 +9,7 @@ SCRIPT = (
     Path(__file__).parents[1]
     / "plugins"
     / "v8ch"
-    / "skills"
-    / "remember"
+    / "memory"
     / "scripts"
     / "validate_memory.py"
 )
@@ -44,7 +43,7 @@ def write_valid_memory(root: Path) -> None:
 <!-- entity -->
 Entity: Remember validation helper
 Type: Module
-Location: plugins/v8ch/skills/remember/scripts/validate_memory.py
+Location: plugins/v8ch/memory/scripts/validate_memory.py
 Purpose: Validates Remember memory files
 Dependencies: none
 

@@ -11,11 +11,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "plugins/v8ch/skills"
 REMEMBER_DIR = SKILLS_DIR / "remember"
-TYPES_PATH = REMEMBER_DIR / "references/types.md"
-VALIDATOR_PATH = REMEMBER_DIR / "scripts/validate_memory.py"
+SHARED_DIR = SKILLS_DIR.parent / "memory"
+TYPES_PATH = SHARED_DIR / "references/types.md"
+VALIDATOR_PATH = SHARED_DIR / "scripts/validate_memory.py"
 LEGACY_DIRECTIVE = REMEMBER_DIR / "references/agents-md-directive.md"
 REVIEW_HEADING = "## Workflow K: Review"
-PROCEDURAL_WRITE = "Workflow J"
 
 # Tokens that only the removed local context lane ever used.
 LEGACY_LANE_TOKENS = (
@@ -136,8 +136,6 @@ def test_typed_recording_handles_optional_and_updated_evidence() -> None:
 @pytest.mark.parametrize(
     ("heading", "skill"),
     [
-        ("## Workflow G: Recommend Curated", "remember"),
-        ("## Workflow H: Recommend Session", "remember"),
         ("## Workflow E: Recommend Curated", "recommend"),
         ("## Workflow F: Recommend Session", "recommend"),
     ],
@@ -185,30 +183,72 @@ def workflow_step_block(heading: str, number: str) -> str:
     return block
 
 
-def test_session_recommendation_routes_procedural_approvals_to_write() -> None:
-    step = normalized(workflow_step_block("## Workflow H: Recommend Session", "8"))
-
-    assert "For procedural approvals, continue through Workflow J." in step
-    assert "## Workflow J: Procedural Write" in workflow_block(
-        "## Workflow J: Procedural Write"
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## Workflow E: Recommend Curated",
+        "## Workflow F: Recommend Session",
+        "## Workflow G: Recommend Procedural",
+    ],
+)
+def test_recommend_approval_preflight_write_order(heading: str) -> None:
+    text = (SKILLS_DIR / "recommend/SKILL.md").read_text(encoding="utf-8")
+    section = text.split(heading, 1)[1].split("\n---\n", 1)[0]
+    approval = (
+        section.index("Ask which to apply")
+        if "Ask which to apply" in section
+        else section.index("Present for user review")
     )
-
-
-def test_procedural_recommendation_names_write_workflow() -> None:
-    step = normalized(workflow_step_block("## Workflow I: Recommend Procedural", "8"))
-
-    assert "Apply only approved changes (Workflow J)." in step
-    assert "## Workflow J: Procedural Write" in workflow_block(
-        "## Workflow J: Procedural Write"
+    preflight = section.index("run the resolved validator")
+    write = (
+        section.index("Apply only approved changes through")
+        if "Apply only approved changes through" in section
+        else section.index("Apply each approved entry through")
     )
+    assert approval < preflight < write
+    assert "memory/references/recording.md" in section[write:]
 
 
-def test_session_recommendation_keeps_journal_write_range() -> None:
-    step = normalized(workflow_step_block("## Workflow H: Recommend Session", "2"))
+def test_remember_has_no_recommendation_workflows() -> None:
+    text = (REMEMBER_DIR / "SKILL.md").read_text(encoding="utf-8")
+    for heading in ("Recommend Curated", "Recommend Session", "Recommend Procedural"):
+        assert f": {heading}" not in text
 
-    assert "Workflow E steps 2–6" in step
-    for number in range(2, 7):
-        assert workflow_step_block("## Workflow E: Session Synthesis", str(number))
+
+def test_both_skills_resolve_shared_assets_from_their_own_path() -> None:
+    for name in ("remember", "recommend"):
+        skill = SKILLS_DIR / name / "SKILL.md"
+        text = skill.read_text(encoding="utf-8")
+        plugin_root = skill.parent.parent.parent
+        for resource in (
+            "references/types.md",
+            "references/procedural-targets.md",
+            "references/journal-format.md",
+            "references/recording.md",
+            "scripts/validate_memory.py",
+        ):
+            assert f"memory/{resource}" in text
+            assert (plugin_root / "memory" / resource).is_file()
+        assert "ascend twice" in text
+    recommend = (SKILLS_DIR / "recommend/SKILL.md").read_text(encoding="utf-8")
+    assert "../remember/" not in recommend
+    assert "continue through Workflow" not in recommend
+
+
+def test_shared_recording_contract_covers_dedupe_and_target_limits() -> None:
+    text = normalized(
+        (SHARED_DIR / "references/recording.md").read_text(encoding="utf-8")
+    )
+    for phrase in (
+        "same name or subject",
+        "Update that entry in place",
+        "append under the correct",
+        "only while",
+        "approved target",
+        "Scan every dated journal file".lower(),
+    ):
+        assert phrase.lower() in text.lower()
+    assert "Write only to the approved target" in text
 
 
 def review_step_block(number: str) -> str:
@@ -298,7 +338,10 @@ def test_review_routes_promotions_through_their_write_paths() -> None:
         review_step_block(review_step_number("Work-item promotions"))
     )
 
-    assert f"**Steering promotions** follow {PROCEDURAL_WRITE}'s dedupe" in steering
+    assert (
+        "**Steering promotions** follow `memory/references/recording.md`'s dedupe"
+        in steering
+    )
     assert "fail closed" in steering
     assert "Use the destination repository set resolved in step" in work_items
     assert "Follow the same tracking rules" in work_items
@@ -388,19 +431,11 @@ def workflow_j_step(number: int) -> str:
     )
 
 
-def test_review_cites_workflow_j_steps_that_say_what_review_reuses() -> None:
+def test_review_cites_shared_recording_contract() -> None:
     section = review_section()
-
-    dedupe = re.search(
-        r"Workflow J's dedupe and patch format \(steps (\d+)-(\d+)\)", section
-    )
-    write = re.search(r"its write step \(step (\d+)\)", section)
-    resolution = re.search(r"Workflow J's target resolution \(step (\d+)\)", section)
-    assert dedupe and write and resolution
-    assert "Check for duplication" in workflow_j_step(int(dedupe.group(1)))
-    assert "patch" in workflow_j_step(int(dedupe.group(2)))
-    assert "write the change" in workflow_j_step(int(write.group(1)))
-    assert "resolve to an approved target" in workflow_j_step(int(resolution.group(1)))
+    assert "memory/references/recording.md" in section
+    assert "Workflow J's dedupe and patch format" not in section
+    assert "Workflow J's target resolution" not in section
 
 
 def test_review_passes_work_item_text_by_file() -> None:
@@ -428,7 +463,8 @@ def test_review_todo_can_promote_to_steering() -> None:
 
 
 def test_memory_skill_assets_are_found() -> None:
-    assert len(memory_skill_assets()) >= 4
+    assert len(memory_skill_assets()) >= 3
+    assert (SHARED_DIR / "references/types.md").is_file()
 
 
 def test_review_two_digit_steps_use_four_space_continuations() -> None:
