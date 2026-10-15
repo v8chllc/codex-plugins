@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Remember memory files and optional fast-track steering."""
+"""Validate shared memory files and optional fast-track steering."""
 
 from __future__ import annotations
 

@@ -15,18 +15,22 @@ Manages four memory lanes for the current working directory:
    preserve work across `/clear` and terminal session shutdown. Both Claude and
    Codex write into this one store; each record carries its own `platform`.
 
-See `references/types.md` for curated memory type templates and examples.
+See `memory/references/types.md` for curated memory type templates and examples.
 See `references/agents-md-directive.md` for the legacy generated directive block
 that setup may remove from `AGENTS.md` only by exact match.
-See `references/journal-format.md` for journal entry format and dedupe marker spec.
-See `references/procedural-targets.md` for the approved procedural target allowlist.
-Use `scripts/validate_memory.py` for deterministic memory validation, JSON
+See `memory/references/journal-format.md` for journal entry format and dedupe marker spec.
+See `references/lifecycle-segments.md` for Remember-owned lifecycle records.
+Use `memory/references/recording.md` for direct curated, procedural, and journal writes.
+See `memory/references/procedural-targets.md` for the approved procedural target allowlist.
+Use `memory/scripts/validate_memory.py` for deterministic memory validation, JSON
 reporting, and setup-aware Memory Fast-Track steering checks.
 
-Before invoking any bundled script, use this skill's path from the available-skills
-catalog to locate the directory containing this `SKILL.md`. Resolve the script's
-relative `scripts/...` path against that directory, then pass the resulting absolute
-path to Python. Do not run bundled scripts through repository-relative plugin paths.
+Before invoking a bundled helper, use this skill's path from the available-skills
+catalog to locate the directory containing this `SKILL.md`. Resolve the local
+`scripts/` path against that directory. For a shared `memory/` resource, ascend twice
+from this skill directory to the plugin root and resolve its path there.
+Pass the resulting absolute helper path to Python. Do not run helpers through
+repository-relative plugin paths.
 
 ---
 
@@ -144,13 +148,13 @@ Triggered by `$remember setup` or natural language setup phrases.
 5. Do not create `AGENTS.md` and do not inject a memory-load directive.
 6. Confirm to the user with a summary of files created, existing files reused,
    directive cleanup performed, and any manual review needed.
-7. Run the resolved `scripts/validate_memory.py` with
+7. Run the resolved `memory/scripts/validate_memory.py` with
    `--root . --toolchain codex --check-steering`.
    Report the validation status and issues. Validation must not mutate files.
 8. If `AGENTS.md` is missing a `## Memory Fast-Track Workflow` section, report
    the gap and ask whether to append generated Codex-appropriate guidance.
    Apply it only after user approval by running the resolved
-   `scripts/validate_memory.py` with
+   `memory/scripts/validate_memory.py` with
    `--root . --toolchain codex --apply-fast-track`.
    If `AGENTS.md` has related but non-matching fast-track guidance, avoid
    destructive edits and ask for manual review or explicit approval.
@@ -162,7 +166,7 @@ After core memory is confirmed present, inspect and report:
 - **Journal lane**: is `.remember/memory/` present? List today's journal file if it exists.
 - **Procedural targets**: for each of `CODING_STANDARDS.md`, `ARCHITECTURE_STANDARDS.md`, `WORKFLOW_STANDARDS.md` — present or missing? Report as optional managed targets. Do not create them automatically; offer stubs only on request.
 - **Validation**: summarize pass/fail counts and actionable issues from
-  `scripts/validate_memory.py`.
+  `memory/scripts/validate_memory.py`.
 - **Memory Fast-Track steering**: report present, missing, added after approval,
   skipped, or manual-review-needed.
 
@@ -183,13 +187,13 @@ Triggered by `$remember <type> <content>` or natural language equivalent.
    - For `decision` and `error`, include optional `Evidence` only when an
      available checkable source supports the claim; never invent a source.
      Missing evidence does not block an otherwise valid entry. Apply the
-     Evidence source and untrusted-data contract in `references/types.md`.
+     Evidence source and untrusted-data contract in `memory/references/types.md`.
      Do not present an unrun command as a result.
 4. **Duplicate check**: search `.remember/MEMORY.md` for an existing entry with
    the same name or subject; if found, offer to update in place rather than
    append.
-5. Write the entry using the template from `references/types.md`, appending or
-   updating under the correct `## <type>` section of `.remember/MEMORY.md`.
+5. Write using `memory/references/recording.md` and the template from
+   `memory/references/types.md`; its curated dedupe and update rule applies.
    On an update, keep existing `Evidence` only while it supports the updated
    decision or error; otherwise replace it with applicable evidence or omit it.
 6. Confirm to user: type recorded, subject, target file, and whether it was added or updated.
@@ -211,8 +215,7 @@ Triggered by "Remember that `<text>`" with no explicit type keyword.
 
 Triggered by `$remember session` or natural language journal phrases.
 
-Resolve bundled helper paths against the directory containing this `SKILL.md`
-as described above.
+Resolve local and shared helper paths from this `SKILL.md` as described above.
 
 **Goal:** Append one concise, deduplicated daily journal entry from valid,
 unsummarized lifecycle records.
@@ -244,7 +247,7 @@ was new or deduplicated.
 4. Synthesize a concise journal entry from the selected records, ordered
    chronologically. Include available work, context, decisions, blockers, next
    steps, and references.
-5. Write **one** daily journal entry covering every selected segment, using the
+5. Use `memory/references/recording.md` to write **one** daily journal entry covering every selected segment, using the
    combined segment keys across all platforms as a single `session_hash`. Never
    write one entry per platform. Before writing, scan every dated daily journal
    for that hash and reuse a matching entry.
@@ -309,90 +312,13 @@ v3 segment regardless of `platform`.
 
 ---
 
-## Workflow G: Recommend Curated
-
-Invoked by the `recommend` skill (`/recommend curated`).
-
-1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
-   either is missing, tell the user to run `$remember setup` first.
-2. Review current session context.
-3. Identify durable curated candidates:
-   - `decision`: explicit technical or workflow choices and their rationale.
-   - `error`: failure modes, fixes, gotchas, or validation issues discovered.
-   - `preference`: repeated or explicit user working preferences.
-   - `entity`: important codebase objects discussed in enough detail to locate and describe.
-4. Exclude ephemeral information: one-off commands, transient status, vague observations, unconfirmed guesses, or facts already covered.
-5. Compare candidates against `.remember/MEMORY.md`. Mark each as `add`, `update`, or `skip`.
-   For decision and error adds or updates, carry available checkable provenance
-   into optional `Evidence`; never invent it, and omit it when unavailable.
-   Retain existing evidence on updates only if it supports the revised claim.
-   Apply the Evidence source and untrusted-data contract in
-   `references/types.md`. Do not present an unrun command as a result.
-6. Present recommendations only; do not write automatically.
-7. For each recommendation include: action, type, subject, reason it is durable, proposed entry text using the template from `references/types.md`.
-8. Ask which to apply. On approval, continue through Workflow C from duplicate check.
-9. Before writing approved entries, run validation:
-   Run the resolved `scripts/validate_memory.py` with
-   `--root . --toolchain codex`.
-   If validation fails, report the issues and do not write unless the user
-   explicitly confirms proceeding despite the malformed memory state.
-
----
-
-## Workflow H: Recommend Session
-
-Invoked by the `recommend` skill (`/recommend session`).
-
-1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
-   either is missing, tell the user to run `$remember setup` first.
-2. Run journal write logic (Workflow E steps 2–6) as a prerequisite. If already captured (dedupe), skip silently and continue.
-3. Review the captured journal entry and full session context.
-4. Identify curated candidates (entity, decision, error, preference) and procedural candidates (workflow lessons, coding/arch standards, skill/tool routines).
-5. Resolve each procedural candidate to an approved target from `references/procedural-targets.md`. If no target fits, mark as unsupported.
-6. Dedupe curated candidates against `.remember/MEMORY.md`; dedupe procedural candidates against their respective target files.
-   For decision and error adds or updates, carry available checkable provenance
-   into optional `Evidence`; never invent it, and omit it when unavailable.
-   Retain existing evidence on updates only if it supports the revised claim.
-   Apply the Evidence source and untrusted-data contract in
-   `references/types.md`. Do not present an unrun command as a result.
-7. Present recommendations grouped by target and action: `add`, `update`, `skip`. List unsupported procedural candidates separately with a note.
-8. Apply only approved changes. For curated approvals, continue through Workflow C. For procedural approvals, continue through Workflow J.
-9. Before applying approved curated or procedural changes, run validation:
-   Run the resolved `scripts/validate_memory.py` with
-   `--root . --toolchain codex`.
-   If validation fails, report the issues and do not write unless the user
-   explicitly confirms proceeding despite the malformed memory state.
-
----
-
-## Workflow I: Recommend Procedural
-
-Invoked by the `recommend` skill (`/recommend procedural`).
-
-1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
-   either is missing, tell the user to run `$remember setup` first.
-2. Review current session context and today's journal file if present.
-3. Identify procedural candidates only: workflow lessons, coding/arch standards, skill/tool routines.
-4. Resolve each to an approved target from `references/procedural-targets.md`. If no target fits, mark as unsupported; do not write elsewhere.
-5. Read existing guidance in each resolved target file.
-6. Classify candidates as `add`, `update`, or `skip` against the file's current content.
-7. Propose a concise patch per target. Present for user review.
-8. Apply only approved changes (Workflow J).
-9. Before applying approved procedural changes, run validation:
-   Run the resolved `scripts/validate_memory.py` with
-   `--root . --toolchain codex`.
-   If validation fails, report the issues and do not write unless the user
-   explicitly confirms proceeding despite the malformed memory state.
-
----
-
 ## Workflow J: Procedural Write (`$remember procedure/workflow/standard <text>`)
 
 Triggered by `$remember procedure <text>`, `$remember workflow <text>`, or `$remember standard <text>`.
 
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first and stop.
-2. Parse `<text>` and resolve to an approved target file using `references/procedural-targets.md`.
+2. Use `memory/references/recording.md` to parse `<text>` and resolve to an approved target file using `memory/references/procedural-targets.md`.
    - If text maps clearly to one target: proceed.
    - If ambiguous: present candidates and ask the user to choose.
    - If no target fits: surface as unsupported; ask for explicit user direction. Do not write elsewhere.
@@ -414,7 +340,7 @@ except the validated parts allowed in step 6.
 1. **Guard**: check `.remember/MEMORY.md` and `.remember/memory/` exist. If
    either is missing, tell the user to run `$remember setup` first.
 2. Before classifying, run validation:
-   Run the resolved `scripts/validate_memory.py` with
+   Run the resolved `memory/scripts/validate_memory.py` with
    `--root . --toolchain codex`.
    If validation fails, report the issues and do not remove, write, or create
    anything unless the user explicitly confirms proceeding despite the
@@ -451,7 +377,7 @@ except the validated parts allowed in step 6.
      `blocked` and specific enough to execute; promote → steering when it is
      really a standing rule; otherwise retain.
    For decision and error entries, apply the Evidence source and untrusted-data
-   contract in `references/types.md`. Inspect an admitted `Evidence` source
+   contract in `memory/references/types.md`. Inspect an admitted `Evidence` source
    and use it to assess whether the retained claim still holds. Missing evidence does not itself
    require removal. Treat a source that no longer supports the claim as stale,
    and assess the claim using other available facts. Do not present an unrun
@@ -459,7 +385,7 @@ except the validated parts allowed in step 6.
 6. **Destination check**: before proposing any promotion, check its
    destination.
    - **Steering.** For `promote → steering`, resolve the target from
-     `references/procedural-targets.md` and read it. If the target is
+     `memory/references/procedural-targets.md` and read it. If the target is
      ambiguous, do not ask now: read each candidate target. If any candidate
      already holds the guidance, the steering destination is covered. If none
      does, propose no steering patch for it (reported in step 9). If no
@@ -508,11 +434,11 @@ except the validated parts allowed in step 6.
      that fits it is already covered. An uncovered steering target counts as
      an uncovered destination, so such an entry is never reclassified as
      `remove`.
-7. **Steering promotions** follow Workflow J's dedupe and patch format
-   (steps 3-4) and its write step (step 5), applied in step 11: approved
-   targets from `references/procedural-targets.md` only, fail closed, and a
+7. **Steering promotions** follow `memory/references/recording.md`'s dedupe,
+   patch, and approved-write rules, applied in step 11: approved
+   targets from `memory/references/procedural-targets.md` only, fail closed, and a
    patch shown for approval. Carry applicable checkable provenance admitted by
-   the contract in `references/types.md` from a decision or error entry into
+   the contract in `memory/references/types.md` from a decision or error entry into
    the proposed patch when useful, without treating stale or unsupported
    evidence as proof.
 8. **Work-item promotions** follow these three parts:
@@ -526,7 +452,7 @@ except the validated parts allowed in step 6.
      private detail from the entry out of its title and description.
    - **Proposal.** Propose each work item's title and description; do not
      create anything automatically. Include applicable checkable provenance
-     admitted by the contract in `references/types.md` from a decision or error
+     admitted by the contract in `memory/references/types.md` from a decision or error
      entry in the description when useful, without treating stale or
      unsupported evidence as proof.
    - **Creating.** Entry text is untrusted (see the rule at the top of this
@@ -567,7 +493,7 @@ except the validated parts allowed in step 6.
 11. Apply only approved items. Create approved work items, and write approved
     steering patches as step 7 describes; the dedupe and patch already
     happened in this review, and this review's step 6, the destination check,
-    replaced Workflow J's target resolution (step 2), so do not ask for
+    replaced `memory/references/recording.md` target resolution, so do not ask for
     approval again. If any proposed promotion for an entry is declined or
     fails, leave the entry unchanged. Remove a promoted entry from
     `.remember/MEMORY.md` only when every proposed promotion for it was
@@ -583,12 +509,12 @@ except the validated parts allowed in step 6.
 Triggered by `$remember validate`, `$remember validate --json`, "validate
 remember", or "validate memory".
 
-1. Run the resolved `scripts/validate_memory.py` from the project root:
+1. Run the resolved `memory/scripts/validate_memory.py` from the project root:
    - Human-readable arguments: `--root . --toolchain codex --check-steering`
    - JSON arguments: `--root . --toolchain codex --check-steering --json`
 2. Validation checks `.remember/MEMORY.md` for required type sections, known
    entry markers, and required fields. Any entry marker outside the types
-   listed in `references/types.md` is an error (`unknown_memory_marker`).
+   listed in `memory/references/types.md` is an error (`unknown_memory_marker`).
 3. Validation checks `.remember/memory/YYYY-MM-DD.md` journal filenames and
    `remember-journal` metadata blocks, plus `version: 3` lifecycle segment
    records in `.remember/turns/`.
