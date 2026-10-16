@@ -87,8 +87,8 @@ start and complete in parallel. If a spawn is refused or fails because of
 capacity or nesting depth, or the batch cannot complete in parallel, close
 every reviewer already spawned, discard all outputs from that incomplete batch,
 and rerun all three reviewers in `sequential-fallback`. Never combine outputs
-from the parallel attempt and the sequential rerun. Record the selected mode
-and the observed failure reason in the report provenance. Decide from tool
+from the parallel attempt and the sequential rerun. Pass the selected mode to
+the synthesizer, which records it in Run Provenance. Decide from tool
 presence and the observed spawn or batch result; never read configuration to
 decide.
 
