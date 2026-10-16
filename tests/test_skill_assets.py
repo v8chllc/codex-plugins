@@ -39,10 +39,12 @@ def asset_id(path: Path) -> str:
 
 
 def normalized(text: str) -> str:
+    """Collapse Markdown line wrapping while preserving token order."""
     return " ".join(text.split())
 
 
 def markdown_section(text: str, heading: str) -> str:
+    """Return the text from a heading through the next level-two heading."""
     start = text.index(heading) + len(heading)
     remainder = text[start:]
     next_heading = re.search(r"\n## ", remainder)
@@ -98,6 +100,7 @@ def test_synthesizer_is_read_only_and_owns_status() -> None:
 
 
 def test_synthesizer_routes_sponsor_decision_conflicts() -> None:
+    """Pin decision parsing, conflict routing, and report references."""
     text = (CONSENSUS_REVIEW_DIR / "agents" / "review-synthesizer.md").read_text(
         encoding="utf-8"
     )
