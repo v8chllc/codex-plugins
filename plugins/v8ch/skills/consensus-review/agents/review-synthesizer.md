@@ -57,9 +57,11 @@ only when its body is the single line `None.`, or a list of consecutive entries
 numbered 1, 2, 3, ... with no gaps. Each entry starts with
 `- **D-<n>:** <decision text>`, followed by zero or more two-space-indented
 `  - Rejected: <alternative>` lines and exactly one two-space-indented
-`  - Source: <https://github.com/...>` line, in that order. The decision text,
-alternatives, and source must be non-empty; numbers are positive decimal
-integers without leading zero. If the section exists but does not parse in
+`  - Source: <https://github.com/...>` line, in that order. A decision entry
+with zero `Rejected:` lines is valid. The decision text, source, and each
+alternative on a `Rejected:` line that is present must be non-empty; numbers
+are positive decimal integers without leading zero. If the section exists but
+does not parse in
 this format, treat it as `None.` and emit exactly one Plan Note titled
 `Unparseable sponsor decisions section`, with no deduction.
 
