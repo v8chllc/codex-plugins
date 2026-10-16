@@ -50,6 +50,31 @@ disposition was `No change required`.
 
 ### 3. Classify each surviving finding
 
+Read sponsor decisions only from the supplied plan, after deduplication. A
+missing `### Sponsor decisions` heading means `None.`. A plan with a section
+has exactly one such level-3 heading. The section is valid
+only when its body is the single line `None.`, or a list of consecutive entries
+numbered 1, 2, 3, ... with no gaps. Each entry starts with
+`- **D-<n>:** <decision text>`, followed by zero or more two-space-indented
+`  - Rejected: <alternative>` lines and exactly one two-space-indented
+`  - Source: <https://github.com/...>` line, in that order. The decision text,
+alternatives, and source must be non-empty; numbers are positive decimal
+integers without leading zero. If the section exists but does not parse in
+this format, treat it as `None.` and emit exactly one Plan Note titled
+`Unparseable sponsor decisions section`, with no deduction.
+
+For each surviving finding, compare both its proposed fix and failure statement
+with every `D-<n>` entry. If its fix would implement a `Rejected:` alternative
+or reverse the decision text, route that contradiction to Plan Notes. Cite all
+matching entries in `**Plan reference:**` as `D-<n>`; give the note no severity
+tag, no `[F-N]` number, and no deduction. Do not resolve conflicting decisions.
+A CRITICAL or HIGH finding with a demonstrated failure is the exception: keep
+it in Must Fix at its ordinary severity and deduction, cite matching `D-<n>`
+entries as plan context, and pass it to the fixer as an ordinary finding. If
+only part of a finding contradicts a decision, route that part to Plan Notes
+and rank any independent defect normally. A finding that matches no entry is
+classified exactly as before.
+
 - **Must Fix:** CRITICAL or HIGH with a demonstrated failure.
 - **Should Fix:** MEDIUM or LOW with a concrete cost.
 - **Latent:** safe only because an invariant elsewhere holds. Name the invariant,
@@ -125,6 +150,12 @@ those three sections:
 ```
 
 A section with no entries contains `None.`
+
+For a decision-related Plan Note, use a plain title and a
+`**Plan reference:** D-<n>` field (list each matching entry). Do not assign it
+an `[F-N]` number or include it as a deducted finding in Score Breakdown. A
+ranked demonstrated failure that contradicts a decision also cites the matching
+`D-<n>` entries in `**Plan reference:**` as context.
 
 The `behavior-deltas` block reports observable behavior change. With none:
 

@@ -97,6 +97,37 @@ def test_synthesizer_is_read_only_and_owns_status() -> None:
         assert f"`{status}`" in text
 
 
+def test_synthesizer_routes_sponsor_decision_conflicts() -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents" / "review-synthesizer.md").read_text(
+        encoding="utf-8"
+    )
+    classification = markdown_section(text, "### 3. Classify each surviving finding")
+    output = markdown_section(text, "## Output and stop rule")
+
+    assert "after deduplication" in classification
+    assert "`### Sponsor decisions`" in classification
+    assert "missing `### Sponsor decisions` heading means `None.`" in classification
+    assert "exactly one such level-3 heading" in classification
+    assert "`- **D-<n>:** <decision text>`" in classification
+    assert "`  - Rejected: <alternative>`" in classification
+    assert "`  - Source: <https://github.com/...>`" in classification
+    assert "`None.`" in classification
+    assert "Unparseable sponsor decisions section" in classification
+    assert "exactly one Plan Note" in classification
+    assert "proposed fix and failure statement" in classification
+    assert "implement a `Rejected:` alternative" in classification
+    assert "reverse the decision text" in classification
+    assert "CRITICAL or HIGH finding with a demonstrated failure" in classification
+    assert "keep\nit in Must Fix" in classification
+    assert "independent defect normally" in classification
+    assert "classified exactly as before" in classification
+    assert "`**Plan reference:**`" in classification
+    assert "no `[F-N]` number, and no deduction" in classification
+    assert "no severity\ntag" in classification
+    assert "`**Plan reference:** D-<n>`" in output
+    assert "not assign it\nan `[F-N]` number" in output
+
+
 def test_skill_is_standalone_and_always_autonomous() -> None:
     text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
     assert "This skill invokes no other skill" in text
