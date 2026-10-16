@@ -29,9 +29,11 @@ directory; and the absolute path of the consensus-review skill directory.
 3. **Write the summary yourself:** one to three bullets drawn from the report's
    Summary section, naming the highest-severity finding and the status. Add the
    sentence that the caller will disposition the advisory findings only when
-   the command in step 2 returned a JSON list. Do not independently infer the
-   advisory condition from report prose, promise an automatic fix cycle, or
-   claim no fixes are needed. Nothing else in the comment is yours to write.
+   the command in step 2 returned a JSON list. Put that sentence inside one of
+   the one to three summary bullets, never on a separate line. Do not
+   independently infer the advisory condition from report prose, promise an
+   automatic fix cycle, or claim no fixes are needed. Nothing else in the
+   comment is yours to write.
 4. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
 5. **Take `--plan-source` and `--delegation-mode` from the report's

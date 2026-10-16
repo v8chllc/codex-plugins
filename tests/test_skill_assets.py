@@ -101,6 +101,37 @@ def test_synthesizer_is_read_only_and_owns_status() -> None:
         assert f"`{status}`" in text
 
 
+def test_poster_places_advisory_disposition_inside_summary_bullet() -> None:
+    """Reject the old instruction that left the disposition on its own line."""
+    poster = (CONSENSUS_REVIEW_DIR / "agents" / "consensus-review-poster.md").read_text(
+        encoding="utf-8"
+    )
+    step_three = normalized(
+        poster.split("3. **Write the summary yourself:**", 1)[1].split(
+            "4. **Do not alter", 1
+        )[0]
+    )
+
+    def assert_bullet_placement(instruction: str) -> None:
+        assert "sentence that the caller will disposition the advisory findings" in (
+            instruction
+        )
+        assert (
+            "only when the command in step 2 returned a JSON list. "
+            "Put that sentence inside one of the one to three summary bullets, "
+            "never on a separate line."
+        ) in instruction
+
+    old_instruction = (
+        "one to three bullets drawn from the report's Summary section. "
+        "Add the sentence that the caller will disposition the advisory findings "
+        "only when the command in step 2 returned a JSON list."
+    )
+    with pytest.raises(AssertionError):
+        assert_bullet_placement(old_instruction)
+    assert_bullet_placement(step_three)
+
+
 def test_synthesizer_routes_sponsor_decision_conflicts() -> None:
     """Pin decision parsing, conflict routing, and report references."""
     text = (CONSENSUS_REVIEW_DIR / "agents" / "review-synthesizer.md").read_text(
