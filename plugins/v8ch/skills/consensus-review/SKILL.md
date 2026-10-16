@@ -76,12 +76,21 @@ Six roles, each a prompt asset in `agents/` beside this file:
 | `consensus-review-poster` | `agents/consensus-review-poster.md` |
 | `consensus-review-fixer` | `agents/consensus-review-fixer.md` |
 
-The three reviewers are genuinely independent and run concurrently. Wait for all
+The three reviewers are genuinely independent. Run them concurrently when the
+parallel batch succeeds; otherwise run all three sequentially. Wait for all
 three before synthesizing. Nothing else in the run is delegated in parallel.
 
-**Delegation mode.** If `spawn_agent` is in your tool list, the mode is
-`parallel-subagents`. If it is absent, the mode is `sequential-fallback`. Decide
-by tool presence alone; never read configuration to decide.
+**Delegation mode.** If `spawn_agent` is absent from your tool list, use
+`sequential-fallback`. If it is present, attempt to spawn the complete
+three-reviewer batch. Use `parallel-subagents` only when all three reviewers
+start and complete in parallel. If a spawn is refused or fails because of
+capacity or nesting depth, or the batch cannot complete in parallel, close
+every reviewer already spawned, discard all outputs from that incomplete batch,
+and rerun all three reviewers in `sequential-fallback`. Never combine outputs
+from the parallel attempt and the sequential rerun. Record the selected mode
+and the observed failure reason in the report provenance. Decide from tool
+presence and the observed spawn or batch result; never read configuration to
+decide.
 
 **Spawning (`parallel-subagents`).** Call `spawn_agent` with `message` set to the
 asset's full contents followed by that role's inputs, `fork_context: false`, and
@@ -89,8 +98,9 @@ both `model: "gpt-5.6-sol"` and `reasoning_effort: "medium"`. Passing the model
 without the effort resets the child to the model's default effort. Omit
 `agent_type`.
 
-**Sequential fallback.** Run each role as an isolated pass in the main thread,
-one at a time, each receiving exactly the inputs its parallel counterpart would:
+**Sequential fallback.** Whether `spawn_agent` is absent or a parallel attempt
+fails, run each role as an isolated pass in the main thread, one at a time. Each
+pass receives exactly the inputs its parallel counterpart would:
 
 - a reviewer pass gets the diff, the changed-file context, the plan, the
   recovered history, and the skill directory — never another reviewer's output;
@@ -143,8 +153,11 @@ git status --porcelain=v1 --untracked-files=all
 
 ### 5. Run the three reviewers
 
-One batch, concurrently. Each gets the diff, the changed-file context, the plan,
-`RECOVERED_CONTEXT`, and the absolute skill directory.
+When `spawn_agent` is available, attempt one concurrent batch. Each reviewer
+gets the diff, the changed-file context, the plan, `RECOVERED_CONTEXT`, and the
+absolute skill directory. Apply the delegation mode rule above if any spawn or
+the batch fails; the sequential rerun uses those same inputs for all three
+reviewers. With no `spawn_agent`, run all three in `sequential-fallback`.
 
 ### 6. Apply the evidence gate
 
