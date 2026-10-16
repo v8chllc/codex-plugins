@@ -154,6 +154,10 @@ def test_failed_parallel_batch_reruns_all_reviewers_without_mixing() -> None:
         fallback
     )
     assert "never another reviewer's output" in fallback
+    assert (
+        "Apply the delegation mode rule above if any spawn or the batch fails"
+        in workflow
+    )
     assert "sequential rerun uses those same inputs for all three reviewers" in workflow
 
 
