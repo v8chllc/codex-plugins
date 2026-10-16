@@ -119,6 +119,11 @@ def test_synthesizer_routes_sponsor_decision_conflicts() -> None:
     assert "`- **D-<n>:** <decision text>`" in classification
     assert "`  - Rejected: <alternative>`" in classification_source
     assert "`  - Source: <https://github.com/...>`" in classification_source
+    assert "A decision entry with zero `Rejected:` lines is valid" in classification
+    assert (
+        "each alternative on a `Rejected:` line that is present must be non-empty"
+        in classification
+    )
     assert "`None.`" in classification
     assert "Unparseable sponsor decisions section" in classification
     assert "exactly one Plan Note" in classification
