@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.consensus_review_support import CONSENSUS_REVIEW_DIR
+from tests.consensus_review_support import CONSENSUS_REVIEW_DIR, REPO_ROOT
 
 UNDEFINED_VARIABLE_RE = re.compile(r"\$\{[^}]*\}")
 HARDCODED_SCRIPT_PATH_RE = re.compile(r"plugins/v8ch/skills/[^\s`)]*/scripts/")
@@ -113,6 +113,68 @@ def test_skill_spawns_with_both_model_and_effort() -> None:
     assert '`reasoning_effort: "medium"`' in text
     assert "gpt-5.5" not in text
     assert "`fork_context: false`" in text
+
+
+def test_delegation_attempts_parallel_and_handles_absent_spawn() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    delegation = normalized(markdown_section(skill, "**Delegation mode.**"))
+    workflow = normalized(markdown_section(skill, "### 5. Run the three reviewers"))
+    assert (
+        "If `spawn_agent` is absent from your tool list, use `sequential-fallback`"
+        in delegation
+    )
+    assert "If it is present, attempt to spawn the complete three-reviewer batch" in (
+        delegation
+    )
+    assert (
+        "Use `parallel-subagents` only when all three reviewers start and complete"
+        in delegation
+    )
+    assert "attempt one concurrent batch" in workflow
+
+
+def test_failed_parallel_batch_reruns_all_reviewers_without_mixing() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    delegation = normalized(markdown_section(skill, "**Delegation mode.**"))
+    fallback = normalized(markdown_section(skill, "**Sequential fallback.**"))
+    workflow = normalized(markdown_section(skill, "### 5. Run the three reviewers"))
+    assert (
+        "spawn is refused or fails because of capacity or nesting depth" in delegation
+    )
+    assert "batch cannot complete in parallel" in delegation
+    assert "close every reviewer already spawned" in delegation
+    assert "discard all outputs from that incomplete batch" in delegation
+    assert "rerun all three reviewers in `sequential-fallback`" in delegation
+    assert (
+        "Never combine outputs from the parallel attempt and the sequential rerun"
+        in delegation
+    )
+    assert "observed failure reason in the report provenance" in delegation
+    assert "Each pass receives exactly the inputs its parallel counterpart would" in (
+        fallback
+    )
+    assert "never another reviewer's output" in fallback
+    assert "sequential rerun uses those same inputs for all three reviewers" in workflow
+
+
+def test_delegation_does_not_consult_configuration() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    delegation = normalized(markdown_section(skill, "**Delegation mode.**"))
+    assert "Decide from tool presence and the observed spawn or batch result" in (
+        delegation
+    )
+    assert "never read configuration to decide" in delegation
+
+
+def test_installation_documents_parallel_capacity_and_fallback() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    installation = markdown_section(readme, "## Installation")
+    assert "three open subagents per session by default" in installation
+    assert "retained builder" in installation
+    assert "review agent, and three reviewers" in installation
+    assert "`~/.codex/config.toml`" in installation
+    assert "[agents]\nmax_concurrent_threads_per_session = 6" in installation
+    assert "all\nthree reviewers in `sequential-fallback`" in installation
 
 
 def test_skill_documents_every_terminal_signal() -> None:

@@ -20,6 +20,19 @@ codex plugin marketplace add ./codex-plugins
 Then restart Codex, open `/plugins`, choose **Codex Plugins by V8CH**, and
 install the `v8ch` plugin.
 
+Codex leaves three open subagents per session by default. A parallel
+`consensus-review` under an orchestrator needs room for a retained builder, a
+review agent, and three reviewers. To allow that batch, set the subagent limit
+to 6 in `~/.codex/config.toml`:
+
+```toml
+[agents]
+max_concurrent_threads_per_session = 6
+```
+
+With a lower limit, `consensus-review` attempts the parallel batch and runs all
+three reviewers in `sequential-fallback` if the batch cannot run in parallel.
+
 ## Repository Layout
 
 - `plugins/` contains Codex CLI plugin-owned assets, grouped by owner or
