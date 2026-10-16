@@ -61,9 +61,8 @@ numbered 1, 2, 3, ... with no gaps. Each entry starts with
 with zero `Rejected:` lines is valid. The decision text, source, and each
 alternative on a `Rejected:` line that is present must be non-empty; numbers
 are positive decimal integers without leading zero. If the section exists but
-does not parse in
-this format, treat it as `None.` and emit exactly one Plan Note titled
-`Unparseable sponsor decisions section`, with no deduction.
+does not parse in this format, treat it as `None.` and emit exactly one Plan Note
+titled `Unparseable sponsor decisions section`, with no deduction.
 
 For each surviving finding, compare both its proposed fix and failure statement
 with every `D-<n>` entry. If its fix would implement a `Rejected:` alternative
@@ -82,8 +81,11 @@ classified exactly as before.
 - **Latent:** safe only because an invariant elsewhere holds. Name the invariant,
   where it is enforced, and what fails if it moves.
 - **Plan Notes:** plan divergence with no defect. No severity, no deduction. A
-  divergence that also causes a defect is ranked as that defect, with the plan
-  context attached.
+  MEDIUM or LOW sponsor-decision contradiction remains a Plan Note even when
+  the contradictory part causes a defect. Only a demonstrated CRITICAL or HIGH
+  contradiction stays ranked under the exception above. Rank independent
+  defects in partly contradictory findings and other plan divergences that
+  cause defects normally, with plan context attached.
 
 ### 4. Score
 

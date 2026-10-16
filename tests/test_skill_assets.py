@@ -139,6 +139,16 @@ def test_synthesizer_routes_sponsor_decision_conflicts() -> None:
     assert "no severity tag" in classification
     assert "`**Plan reference:** D-<n>`" in output
     assert "not assign it an `[F-N]` number" in output
+    assert (
+        "MEDIUM or LOW sponsor-decision contradiction remains a Plan Note even when"
+        in classification
+    )
+    assert "the contradictory part causes a defect" in classification
+    assert (
+        "Only a demonstrated CRITICAL or HIGH contradiction stays ranked"
+        in classification
+    )
+    assert "Rank independent defects in partly contradictory findings" in classification
 
 
 def test_skill_is_standalone_and_always_autonomous() -> None:
