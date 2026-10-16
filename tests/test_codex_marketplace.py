@@ -45,6 +45,7 @@ def test_marketplace_points_to_valid_plugin_manifest() -> None:
 
 
 def test_plugin_manifest_component_paths_exist() -> None:
+    """Check that each declared plugin component resolves inside the plugin."""
     manifest_path = REPO_ROOT / "plugins/v8ch/.codex-plugin/plugin.json"
     manifest = load_json(manifest_path)
     plugin_root = manifest_path.parent.parent
