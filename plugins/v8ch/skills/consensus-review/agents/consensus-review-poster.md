@@ -34,7 +34,11 @@ directory; and the absolute path of the consensus-review skill directory.
    claim no fixes are needed. Nothing else in the comment is yours to write.
 4. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
-5. **Write the summary scratch file** outside the repository, then post with:
+5. **Take `--plan-source` and `--delegation-mode` from the report's
+   `### Run Provenance` line.** Copy those values exactly into the posting
+   command, rather than using the plan source or delegation mode supplied in
+   your prompt. Write the summary scratch file outside the repository, then post
+   with:
 
    ```bash
    uv run <skill-dir>/scripts/post_review_comment.py \

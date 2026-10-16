@@ -199,6 +199,10 @@ the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
 counts, the repository directory, and the absolute skill directory. A posting
 failure is `ABORT` with `reason` `post_failed`.
 
+Hand the poster the scope basis exactly as `recover_context.py` printed it and
+the reviewed SHA exactly as `git rev-parse HEAD` printed it. Do not reformat,
+abbreviate, or add characters to either value.
+
 After the poster reports a successful post, its comment URL, and its advisory
 JSON result, use that exact result for terminal routing. If the poster does not
 return the result, rerun the same command against the exact report file it
