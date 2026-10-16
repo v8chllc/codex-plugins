@@ -35,6 +35,7 @@ PROSE_ASSETS = sorted(
 
 
 def asset_id(path: Path) -> str:
+    """Label a prose asset by its path within the consensus-review skill."""
     return str(path.relative_to(CONSENSUS_REVIEW_DIR))
 
 
@@ -90,6 +91,7 @@ def test_reviewer_assets_require_evidence_and_forbid_mutation(name: str) -> None
 
 
 def test_synthesizer_is_read_only_and_owns_status() -> None:
+    """Keep synthesis read-only and make it the owner of review status."""
     text = (CONSENSUS_REVIEW_DIR / "agents" / "review-synthesizer.md").read_text(
         encoding="utf-8"
     )
@@ -135,6 +137,7 @@ def test_synthesizer_routes_sponsor_decision_conflicts() -> None:
 
 
 def test_skill_is_standalone_and_always_autonomous() -> None:
+    """Prevent the skill from depending on removed workflow controls."""
     text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
     assert "This skill invokes no other skill" in text
     assert "It never prompts the operator." in text
