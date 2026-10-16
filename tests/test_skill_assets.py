@@ -149,7 +149,11 @@ def test_failed_parallel_batch_reruns_all_reviewers_without_mixing() -> None:
         "Never combine outputs from the parallel attempt and the sequential rerun"
         in delegation
     )
-    assert "observed failure reason in the report provenance" in delegation
+    assert (
+        "Pass the selected mode to the synthesizer, which records it in Run Provenance"
+        in delegation
+    )
+    assert "failure reason" not in delegation
     assert "Each pass receives exactly the inputs its parallel counterpart would" in (
         fallback
     )
