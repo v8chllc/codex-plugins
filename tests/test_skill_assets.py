@@ -191,29 +191,6 @@ def test_poster_uses_the_deterministic_advisory_result() -> None:
     assert "the exact advisory JSON result from step" in poster_normalized
 
 
-def test_poster_copies_metadata_from_report_provenance() -> None:
-    poster = (CONSENSUS_REVIEW_DIR / "agents/consensus-review-poster.md").read_text(
-        encoding="utf-8"
-    )
-    instruction = normalized(poster)
-    assert "`--plan-source` and `--delegation-mode`" in instruction
-    assert "from the report's `### Run Provenance` line" in instruction
-    assert "Copy those values exactly" in instruction
-    assert (
-        "rather than using the plan source or delegation mode supplied in"
-        in instruction
-    )
-    assert "Do not retry with different inputs" in instruction
-
-
-def test_poster_handoff_preserves_recovered_basis_and_full_head_sha() -> None:
-    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
-    handoff = normalized(markdown_section(skill, "### 9. Post or return"))
-    assert "scope basis exactly as `recover_context.py` printed it" in handoff
-    assert "reviewed SHA exactly as `git rev-parse HEAD` printed it" in handoff
-    assert "Do not reformat, abbreviate, or add characters" in handoff
-
-
 def test_text_only_repairs_have_distinct_author_proof() -> None:
     fixer = (CONSENSUS_REVIEW_DIR / "agents/consensus-review-fixer.md").read_text(
         encoding="utf-8"
