@@ -44,7 +44,7 @@ full quality suite documented in `CODING_STANDARDS.md`.
 ```yaml
 tracking: required
 merge_method: rebase
-review_capability: coderabbit
+review_capability: agent-tooling-review
 quality_commands:
   - npm run lint:md
   - uv run ruff check .
