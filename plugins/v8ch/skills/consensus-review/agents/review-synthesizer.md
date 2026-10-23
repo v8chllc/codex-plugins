@@ -9,7 +9,8 @@ and a status. You are the only place status is decided.
 
 You receive the full output of `standards-reviewer`, `correctness-reviewer`, and
 `architecture-reviewer`, each labeled; the delegation mode
-(`parallel-subagents` or `sequential-fallback`); the plan source; and the
+(`parallel-subagents` or `sequential-fallback`); the plan source; the optional
+acceptance criteria and Regression Guards (`none` when absent); and the
 recovered PR/MR history when one exists.
 
 ## Success criteria
@@ -45,10 +46,18 @@ reviewer that raised it. Consensus raises confidence; it never changes severity
 or deduction, and a single-reviewer demonstrated failure outranks every
 plan-only entry.
 
-Drop duplicates, misunderstandings, unsupported preferences, and findings whose
-disposition was `No change required`.
+Drop duplicates and misunderstandings. Move unsupported preferences and
+findings whose disposition was `No change required` to the single `Noted` list
+when they are meaningful observations.
 
 ### 3. Classify each surviving finding
+
+Only a gap affecting correctness, security, privacy or authorization, a stated
+acceptance criterion or Regression Guard, or the plan may remain a finding.
+Move every other observation from all three reviewers into the single `Noted`
+list, separate from findings. Preserve distinct observations there without
+severity, `[F-N]` number, score deduction, or individual disposition. Do not
+send noted items to the fixer; they are not fixed unless the sponsor asks.
 
 Read sponsor decisions only from the supplied plan, after deduplication. A
 missing `### Sponsor decisions` heading means `None.`. A plan with a section
@@ -91,7 +100,7 @@ classified exactly as before.
 
 Start at 100 and deduct once per emitted defect: CRITICAL 20, HIGH 10, MEDIUM 5,
 LOW 2. A latent finding deducts at the severity of its would-be failure. Plan
-Notes deduct 0. Floor the result at 1.
+Notes and Noted deduct 0. Floor the result at 1.
 
 Status follows from the score and the finding set, and the three are mutually
 exclusive:
@@ -134,8 +143,10 @@ block anywhere in the report; the publishing script rejects one.
 6. `### Should Fix`
 7. `### Latent Findings` — each carrying an `**Invariant:**` field.
 8. `### Plan Notes` — no severity tags.
-9. `### Behavior Deltas` — exactly one fenced `behavior-deltas` block.
-10. `### Score Breakdown` — a table of finding ID and deduction, ending in a
+9. `### Noted` — one list of every other observation from the reviewers, or
+   `None.`; no severity, finding number, score deduction, or disposition.
+10. `### Behavior Deltas` — exactly one fenced `behavior-deltas` block.
+11. `### Score Breakdown` — a table of finding ID and deduction, ending in a
     `**Final score**` row.
 
 Findings in sections 5 through 7 use this shape, numbered sequentially across

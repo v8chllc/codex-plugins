@@ -1,6 +1,6 @@
 ---
 name: consensus-review
-description: Runs an autonomous, evidence-gated consensus code review. Use when reviewing code changes, before pushing a PR, or as the review step in a development workflow. Runs three general-purpose reviewers (standards, correctness, architecture) from the skill's own prompt assets, synthesizes them into a tiered report with a 1-100 quality score, posts one review comment per cycle to a PR/MR, and fixes and re-reviews within a three-review budget. Accepts an optional plan as review context. Scope defaults to all local changes (staged, unstaged, and untracked); also accepts a PR/MR number, a base commit SHA, a branch diff, or an explicit file list.
+description: Runs an autonomous, evidence-gated consensus code review. Use when reviewing code changes, before pushing a PR, or as the review step in a development workflow. Runs three general-purpose reviewers (standards, correctness, architecture) from the skill's own prompt assets, synthesizes them into a tiered report with a 1-100 quality score, posts one review comment per cycle to a PR/MR, and fixes and re-reviews within a three-review budget. Accepts an optional plan, acceptance criteria, and Regression Guards as review context. Scope defaults to all local changes (staged, unstaged, and untracked); also accepts a PR/MR number, a base commit SHA, a branch diff, or an explicit file list.
 ---
 
 # Consensus Review
@@ -46,6 +46,12 @@ never as a severity source. Record the plan source as the literal `none`, or as
 `supplied: <path or short description>`. The same value goes in the report
 provenance and in the `plan_source` metadata field. Plan context is never
 recovered from PR/MR comments.
+
+**Acceptance criteria and Regression Guards** — optional caller-supplied text or
+files containing the run's stated criteria and guards. Keep their wording and
+identifiers intact. When absent, use `none`; never infer them from the diff,
+plan, or PR/MR comments. They provide the requirement boundary for findings,
+not authority to edit the requirements.
 
 **Review budget** — an optional top-level caller control named `review_budget`.
 The only non-default value is `single_cycle`, accepted only when a PR/MR number
@@ -103,10 +109,12 @@ fails, run each role as an isolated pass in the main thread, one at a time. Each
 pass receives exactly the inputs its parallel counterpart would:
 
 - a reviewer pass gets the diff, the changed-file context, the plan, the
-  recovered history, and the skill directory — never another reviewer's output;
-- the synthesizer pass gets all three reviewer outputs, the delegation mode, and
-  the plan source;
-- the poster and fixer passes get the synthesized report plus their own inputs.
+  acceptance criteria, the Regression Guards, the recovered history, and the
+  skill directory — never another reviewer's output;
+- the synthesizer pass gets all three reviewer outputs, the delegation mode, the
+  plan source, the acceptance criteria, and the Regression Guards;
+- the poster and fixer passes get the synthesized report plus their own inputs;
+  the fixer also gets the plan, acceptance criteria, and Regression Guards.
 
 Keep every completed role output verbatim until the run ends, and discard each
 pass's intermediate reasoning before starting the next. This mode expects the
@@ -154,10 +162,11 @@ git status --porcelain=v1 --untracked-files=all
 ### 5. Run the three reviewers
 
 When `spawn_agent` is available, attempt one concurrent batch. Each reviewer
-gets the diff, the changed-file context, the plan, `RECOVERED_CONTEXT`, and the
-absolute skill directory. Apply the delegation mode rule above if any spawn or
-the batch fails; the sequential rerun uses those same inputs for all three
-reviewers. With no `spawn_agent`, run all three in `sequential-fallback`.
+gets the diff, the changed-file context, the plan, the acceptance criteria, the
+Regression Guards, `RECOVERED_CONTEXT`, and the absolute skill directory. Apply
+the delegation mode rule above if any spawn or the batch fails; the sequential
+rerun uses those same inputs for all three reviewers. With no `spawn_agent`, run
+all three in `sequential-fallback`.
 
 ### 6. Apply the evidence gate
 
@@ -191,7 +200,8 @@ not to write, rather than relying on this check alone.
 ### 8. Synthesize
 
 Run `review-synthesizer` with all three reviewer outputs labeled in full, the
-delegation mode, the plan source, and `RECOVERED_CONTEXT`. Repeat step 7
+delegation mode, the plan source, the acceptance criteria, the Regression
+Guards, and `RECOVERED_CONTEXT`. Repeat step 7
 afterwards.
 
 The synthesizer applies the same evidence gate as step 6. If it returns

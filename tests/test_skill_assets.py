@@ -101,6 +101,73 @@ def test_synthesizer_is_read_only_and_owns_status() -> None:
         assert f"`{status}`" in text
 
 
+@pytest.mark.parametrize(
+    "name", ("standards-reviewer", "correctness-reviewer", "architecture-reviewer")
+)
+def test_reviewers_bound_findings_and_return_other_observations(name: str) -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents" / f"{name}.md").read_text(encoding="utf-8")
+    assert "correctness, security, privacy or authorization" in normalized(text)
+    assert "a stated acceptance criterion or Regression Guard" in normalized(text)
+    assert "or the plan" in normalized(text)
+    assert "## Noted" in text
+    assert "Noted items have no" in text
+    assert "fix request" in text
+    assert "criteria and Regression Guards (each `none` when absent)" in normalized(
+        text
+    )
+
+
+def test_synthesizer_has_one_unscored_noted_list() -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents" / "review-synthesizer.md").read_text(
+        encoding="utf-8"
+    )
+    classification = normalized(
+        markdown_section(text, "### 3. Classify each surviving finding")
+    )
+    output = normalized(markdown_section(text, "## Output and stop rule"))
+    assert "Only a gap affecting correctness, security, privacy or authorization" in (
+        classification
+    )
+    assert "a stated acceptance criterion or Regression Guard" in classification
+    assert "single `Noted` list, separate from findings" in classification
+    assert "Do not send noted items to the fixer" in classification
+    assert "`### Noted` — one list" in output
+    assert "no severity, finding number, score deduction, or disposition" in output
+
+
+def test_fixer_preserves_requirements_and_does_not_expand_scope() -> None:
+    fixer = (CONSENSUS_REVIEW_DIR / "agents" / "consensus-review-fixer.md").read_text(
+        encoding="utf-8"
+    )
+    workflow = (CONSENSUS_REVIEW_DIR / "references" / "fix-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    for text in (fixer, workflow):
+        text = normalized(text)
+        assert "do not add scope" in text.lower()
+        assert "Regression Guard" in text
+        assert "plan decision" in text
+        assert "`sponsor-decision` marker" in text
+        assert "Noted" in text
+        assert "no individual disposition" in text or "do not disposition" in text
+
+
+def test_skill_accepts_and_passes_optional_run_requirements() -> None:
+    skill = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    inputs = normalized(markdown_section(skill, "## Inputs"))
+    delegation = normalized(markdown_section(skill, "## Roles and delegation"))
+    workflow = normalized(markdown_section(skill, "## Workflow"))
+    assert "Acceptance criteria and Regression Guards" in inputs
+    assert "optional caller-supplied text or files" in inputs
+    assert "When absent, use `none`" in inputs
+    assert "acceptance criteria, the Regression Guards" in delegation
+    assert "acceptance criteria, the Regression Guards" in workflow
+    assert (
+        "the fixer also gets the plan, acceptance criteria, and Regression Guards"
+        in delegation
+    )
+
+
 def test_poster_places_advisory_disposition_inside_summary_bullet() -> None:
     """Reject the old instruction that left the disposition on its own line."""
     poster = (CONSENSUS_REVIEW_DIR / "agents" / "consensus-review-poster.md").read_text(

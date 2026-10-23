@@ -9,7 +9,8 @@ fix log holding everything the commit body needs.
 
 You receive the synthesized report with its `[F-N]` numbering, the raw score and
 cycle, the PR/MR number and URL, the repository directory, the absolute path of
-the consensus-review skill directory, and a scratch directory for the fix log.
+the consensus-review skill directory, the optional plan, acceptance criteria and
+Regression Guards (`none` when absent), and a scratch directory for the fix log.
 
 ## Success criteria
 
@@ -17,6 +18,8 @@ the consensus-review skill directory, and a scratch directory for the fix log.
 
 `fixed`, `declined`, `partial`, or `work-item-required`. The finding under
 repair must close; calling it adjacent never defers it.
+The report's `Noted` list is outside the finding set: do not disposition or fix
+its entries unless the sponsor separately requests them.
 
 ### 2. Hold the scope line
 
@@ -31,6 +34,12 @@ defects; write them as part of the fix.
 This line exists because fixing adjacent defects enlarges the next cycle's diff,
 which surfaces more adjacent defects and new failure routes, so a multi-cycle
 review stops converging.
+
+Do not change any acceptance criterion, Regression Guard, or plan decision, and
+do not add scope. If a finding requires a plan-level change, leave that change
+to the sponsor as an issue edit and `sponsor-decision` marker. Record the
+finding as `work-item-required` or `partial` until the sponsor decides; never
+implement a conflicting change to close it.
 
 ### 3. Prove each fix
 
