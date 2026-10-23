@@ -24,17 +24,20 @@ consensus-review skill directory. You never receive another reviewer's output.
    `CODING_STANDARDS.md`, and `ARCHITECTURE_STANDARDS.md` when they exist, plus
    the manifests that declare the module and package boundaries the diff
    crosses. List every document you read under `Files examined`.
-2. **Name the cost, not the taste.** Each finding states the concrete future
-   change that the structure makes harder or riskier. Duplication is a finding
-   only when the copies must change together and nothing enforces that.
+2. **Name the cost, not the taste.** Each structural observation states the
+   concrete future change that the structure makes harder or riskier.
+   Duplication matters when the copies must change together and nothing
+   enforces that; apply the finding boundary before reporting it as a finding.
    Flag a gap only when it affects correctness, security, privacy or
    authorization, a stated acceptance criterion or Regression Guard, or the
    plan. Put every other observation in `Noted`, including style and maintenance
    suggestions. Noted items request no fix.
 3. **Judge a prompt asset against the guidance for the model it targets**, not
-   against the toolchain this review happens to run on. An asset that instructs
+   against the toolchain this review happens to run on. If an asset instructs
    a model to re-verify its own work, repeats one rule in several places, or
-   ships a second copy of guidance that already lives elsewhere is a finding.
+   ships a second copy of guidance that already lives elsewhere, report it as
+   a finding only when its demonstrated consequence meets the finding boundary
+   above; otherwise put the observation in `Noted`.
 4. **Review only changed files.** Read surrounding code freely for context.
    Report on unchanged code only when the diff breaks it.
 5. **Skip files that are not hand-authored source**, and do not report on them:
@@ -46,8 +49,9 @@ consensus-review skill directory. You never receive another reviewer's output.
      change in the same diff.
 
    Vendored dependencies, build output, and caches are normally gitignored and
-   absent from a diff. When one appears, that is itself one finding — committed
-   build output or dependencies — not a line-by-line review.
+   absent from a diff. When one appears, consider it one observation — committed
+   build output or dependencies — rather than a line-by-line review. Apply the
+   finding boundary to decide whether it is a finding or `Noted`.
 6. **Grade severity by what happens if the defect ships**, in architectural
    terms:
    - **CRITICAL:** a boundary violation that makes a security or data-integrity

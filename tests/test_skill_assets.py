@@ -117,6 +117,35 @@ def test_reviewers_bound_findings_and_return_other_observations(name: str) -> No
     )
 
 
+def test_architecture_prompt_patterns_obey_finding_boundary() -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents" / "architecture-reviewer.md").read_text(
+        encoding="utf-8"
+    )
+    criteria = normalized(markdown_section(text, "## Success criteria"))
+    prompt_rule = criteria.split("3. **Judge a prompt asset", 1)[1].split("4.", 1)[0]
+    assert "re-verify its own work" in prompt_rule
+    assert "repeats one rule in several places" in prompt_rule
+    assert "only when its demonstrated consequence meets the finding boundary" in (
+        prompt_rule
+    )
+    assert "otherwise put the observation in `Noted`" in prompt_rule
+    assert "apply the finding boundary before reporting it as a finding" in criteria
+
+
+@pytest.mark.parametrize(
+    "name", ("standards-reviewer", "correctness-reviewer", "architecture-reviewer")
+)
+def test_committed_build_output_observation_obeys_boundary(name: str) -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents" / f"{name}.md").read_text(encoding="utf-8")
+    rule = normalized(text).split("Vendored dependencies, build output", 1)[1]
+    rule = rule.split("## Constraints and authority", 1)[0]
+    assert "committed build output or dependencies" in rule
+    assert (
+        "Apply the finding boundary to decide whether it is a finding or `Noted`"
+        in (rule)
+    )
+
+
 def test_synthesizer_has_one_unscored_noted_list() -> None:
     text = (CONSENSUS_REVIEW_DIR / "agents" / "review-synthesizer.md").read_text(
         encoding="utf-8"
