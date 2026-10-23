@@ -23,7 +23,10 @@ uv run <skill-dir>/scripts/recover_context.py <number> --repo-dir <repo-root>
 
 Run `consensus-review-fixer` with the synthesized report and its `[F-N]`
 numbering, the raw score and cycle, the PR/MR number and URL, the repository
-directory, the absolute skill directory, and a scratch directory for the fix log.
+directory, the absolute skill directory, the optional plan, acceptance criteria
+and Regression Guards (`none` when absent), and a scratch directory for the fix
+log. Pass only numbered findings for disposition; the report's one `Noted` list
+needs no individual disposition and is not fixed unless the sponsor asks.
 
 The raw score is the only threshold input. There are no fix modes and no
 score-gap targeting: every current finding gets a disposition.
@@ -140,6 +143,9 @@ identical runs cannot end on different signals:
 
 Edit only tracked files inside the findings under repair and the tests that
 prove them. Run the repository's documented quality commands and `git` directly.
+Do not change a criterion, Regression Guard, or plan decision, and do not add
+scope. A required plan-level change goes to the sponsor as an issue edit and
+`sponsor-decision` marker, never into a fixer commit.
 Never merge, deploy, force-push, rewrite history, create a tracking item, or
 post a comment from this workflow.
 

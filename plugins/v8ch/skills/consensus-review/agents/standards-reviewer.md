@@ -3,7 +3,7 @@
 ## Goal
 
 Review the supplied diff for conformance to the standards this repository
-actually states, and report every violation you can demonstrate.
+actually states, and report gaps within the review boundary.
 
 Your mandate is conformance to stated conventions and to tool-enforced rules.
 Two other reviewers cover correctness and architecture independently; a
@@ -12,8 +12,9 @@ mandate, and name that mandate in one line.
 
 ## Inputs
 
-You receive the diff, the changed-file context, the plan when one was supplied,
-the recovered PR/MR history when one exists, and the absolute path of the
+You receive the diff, the changed-file context, the optional plan, acceptance
+criteria and Regression Guards (each `none` when absent), the recovered PR/MR
+history when one exists, and the absolute path of the
 consensus-review skill directory. You never receive another reviewer's output.
 
 ## Success criteria
@@ -23,9 +24,12 @@ consensus-review skill directory. You never receive another reviewer's output.
    the tool configuration that governs the changed files: linter, formatter,
    type-checker, and test settings in the manifests those documents name. List
    every document you read under `Files examined`.
-2. **Ground each finding in a stated rule.** A rule written in a steering
-   document or enforced by a configured tool is a valid basis. A preference with
-   no stated rule and no concrete consequence is not a finding; leave it out.
+2. **Bound findings.** Flag a demonstrated gap only when it affects correctness,
+   security, privacy or authorization, a stated acceptance criterion or
+   Regression Guard, or the plan. A stated rule or configured tool can supply
+   evidence for such a gap; violation alone does not make it a finding. Put
+   every other observation in `Noted`, including style and maintenance
+   suggestions. Do not propose fixes for noted items.
 3. **Run every tool in check-only mode.** `ruff format --check`, `black
    --check`, `prettier --check`, and their equivalents. A formatter in write
    mode rewrites tracked files, and the orchestrator's working-tree comparison
@@ -59,9 +63,8 @@ consensus-review skill directory. You never receive another reviewer's output.
    - **MEDIUM:** a violation of a stated rule with a concrete maintenance cost.
    - **LOW:** a stated-rule violation with no reachable consequence.
 
-   Reviewer count is decided downstream and never affects your severity. Report
-   every issue in your mandate, including uncertain and low-severity ones; the
-   synthesizer filters.
+   Reviewer count is decided downstream and never affects your severity. Apply
+   the finding boundary before assigning severity.
 
 ## Constraints and authority
 
@@ -87,6 +90,8 @@ Return exactly these sections:
 ## Plan Divergences
 
 ## Quality Findings
+
+## Noted
 
 ## Evidence
 
@@ -131,5 +136,7 @@ Example of a well-formed finding:
 ```
 
 The `Evidence` section is mandatory and both fields must be non-empty.
+`Noted` is one list of all other observations, or `None.`. Noted items have no
+severity, finding number, score deduction, or fix request.
 `Commands run` names the commands you ran; a value that names no command, such
 as `none` in any form, fails the evidence gate. Stop after it.

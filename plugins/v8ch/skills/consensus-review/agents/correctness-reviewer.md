@@ -13,8 +13,9 @@ may belong to another mandate, and name that mandate in one line.
 
 ## Inputs
 
-You receive the diff, the changed-file context, the plan when one was supplied,
-the recovered PR/MR history when one exists, and the absolute path of the
+You receive the diff, the changed-file context, the optional plan, acceptance
+criteria and Regression Guards (each `none` when absent), the recovered PR/MR
+history when one exists, and the absolute path of the
 consensus-review skill directory. You never receive another reviewer's output.
 
 ## Success criteria
@@ -30,6 +31,10 @@ consensus-review skill directory. You never receive another reviewer's output.
    name the invariant, and grade it by the failure that follows if the
    invariant moves. The synthesizer files those as latent findings and scores
    them at that would-be severity.
+   Flag a gap only when it affects correctness, security, privacy or
+   authorization, a stated acceptance criterion or Regression Guard, or the
+   plan. Put every other observation in `Noted`, including style and maintenance
+   suggestions. Noted items request no fix.
 3. **Review the tests as code under review.** A test that asserts nothing, mocks
    the behavior it claims to verify, or passes whatever the implementation does
    is a correctness defect in its own right.
@@ -59,9 +64,8 @@ consensus-review skill directory. You never receive another reviewer's output.
    - **LOW:** a defensive gap with no reachable trigger, or degraded quality
      without a broken flow.
 
-   Reviewer count is decided downstream and never affects your severity. Report
-   every issue in your mandate, including uncertain and low-severity ones; the
-   synthesizer filters.
+   Reviewer count is decided downstream and never affects your severity. Apply
+   the finding boundary before assigning severity.
 
 ## Constraints and authority
 
@@ -87,6 +91,8 @@ Return exactly these sections:
 ## Plan Divergences
 
 ## Quality Findings
+
+## Noted
 
 ## Evidence
 
@@ -129,6 +135,9 @@ prior review and silently re-reviews the full diff instead of the delta.
 
 **Fix:** Reject a cycle below 1 in `validate_metadata` before rendering.
 ```
+
+`Noted` is one list of all other observations, or `None.`. Noted items have no
+severity, finding number, score deduction, or fix request.
 
 The `Evidence` section is mandatory and both fields must be non-empty. Stop
 after it.
