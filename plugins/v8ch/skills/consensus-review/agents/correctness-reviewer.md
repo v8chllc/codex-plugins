@@ -52,8 +52,9 @@ consensus-review skill directory. You never receive another reviewer's output.
      change in the same diff.
 
    Vendored dependencies, build output, and caches are normally gitignored and
-   absent from a diff. When one appears, that is itself one finding — committed
-   build output or dependencies — not a line-by-line review.
+   absent from a diff. When one appears, consider it one observation — committed
+   build output or dependencies — rather than a line-by-line review. Apply the
+   finding boundary to decide whether it is a finding or `Noted`.
 7. **Grade severity by what happens if the defect ships:**
    - **CRITICAL:** an exploitable security flaw, an auth bypass, or data loss or
      corruption reachable in production.
