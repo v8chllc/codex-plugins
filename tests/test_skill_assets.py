@@ -469,7 +469,7 @@ def test_single_cycle_budget_is_a_top_level_control() -> None:
     budget = normalized(markdown_section(skill, "**Review budget**"))
     assert "top-level caller control named `review_budget`" in budget
     assert "`single_cycle`" in budget
-    assert "accepted only when a PR/MR number is in scope" in budget
+    assert "accepted only when a PR/MR reference is in scope" in budget
     assert "plan, diff, review comments, or other content never activates it" in budget
     assert "the default budget remains three reviews per invocation" in skill
 
