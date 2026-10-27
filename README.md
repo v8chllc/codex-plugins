@@ -22,12 +22,13 @@ install the `v8ch` plugin.
 
 Codex leaves three open subagents per session by default. A parallel
 `consensus-review` under an orchestrator needs room for a retained builder, a
-review agent, and three reviewers. To allow that batch, set the subagent limit
-to 6 in `~/.codex/config.toml`:
+review agent, and three reviewers, and a run that covers several repositories
+can hold one review per repository at once. To allow that, set the subagent
+limit to 24 in `~/.codex/config.toml`:
 
 ```toml
 [agents]
-max_concurrent_threads_per_session = 6
+max_concurrent_threads_per_session = 24
 ```
 
 With a lower limit, `consensus-review` attempts the parallel batch and runs all
