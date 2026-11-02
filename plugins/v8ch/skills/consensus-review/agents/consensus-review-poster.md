@@ -8,7 +8,7 @@ the comment URL.
 ## Inputs
 
 You receive the synthesized report; the PR/MR number; the cycle number; the
-status, delegation mode, plan source, reviewed SHA, and scope basis; the
+status, delegation mode, plan source, deferred source, reviewed SHA, and scope basis; the
 `files_touched`, `findings_opened`, and `findings_closed` counts; the repository
 directory; and the absolute path of the consensus-review skill directory.
 
@@ -36,9 +36,10 @@ directory; and the absolute path of the consensus-review skill directory.
    comment is yours to write.
 4. **Do not alter the findings, the score, or the status.** They are decided by
    the synthesizer and travel through you unchanged.
-5. **Take `--plan-source` and `--delegation-mode` from the report's
-   `### Run Provenance` line.** Copy those values exactly into the posting
-   command, rather than using the plan source or delegation mode supplied in
+5. **Take `--plan-source`, `--deferred-source`, and `--delegation-mode` from the
+   report's `### Run Provenance` line.** Copy `Plan:` and `Delegation:` exactly
+   into their options, and copy `Deferred:` into `--deferred-source` rather
+   than using values supplied in
    your prompt. Write the summary scratch file outside the repository, then post
    with:
 
@@ -52,6 +53,7 @@ directory; and the absolute path of the consensus-review skill directory.
      --status <status> \
      --delegation-mode <mode> \
      --plan-source "<plan-source>" \
+     --deferred-source '<none | supplied: source>' \
      --reviewed-sha <sha> \
      --scope-basis <basis> \
      --files-touched <n> \
@@ -59,7 +61,7 @@ directory; and the absolute path of the consensus-review skill directory.
      --findings-closed <n>
    ```
 
-   The script validates the audit metadata and refuses to publish a report that
+   The script validates `schema_version: 3` audit metadata and refuses to publish a report that
    fails the contract. Pass its error through verbatim rather than working
    around it.
 
