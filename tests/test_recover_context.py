@@ -504,3 +504,35 @@ def test_extract_surviving_body_falls_back_without_a_details_block() -> None:
     module = load_recover_context()
     body = "<!-- consensus-review\n{}\n-->\n\nPlain body"
     assert module.extract_surviving_body(body) == "Plain body"
+
+
+def test_cycle_two_recovers_historical_latent_finding_and_its_closure() -> None:
+    module = load_recover_context()
+    earlier = (FIXTURES_DIR / "review-comment-historical-latent.md").read_text(
+        encoding="utf-8"
+    )
+    current = rendered_comment(cycle=2, findings_closed=1, findings_opened=0)
+    current = current.replace(
+        "### Summary\n\n",
+        "### Summary\n\n"
+        "- Earlier [F-3] closed: the role check now lives in the callee.\n\n",
+    )
+    reviews = module.parse_review_comments(
+        [
+            github_comment(earlier),
+            github_comment(current, created_at="2026-09-11T12:00:00Z"),
+        ]
+    )
+    assert module.next_cycle(reviews) == 3
+    recovered = module.build_context_output(
+        number=7,
+        platform="github",
+        reviews=reviews,
+        scope_basis="delta-since:1a2b3c4",
+        scope_reason="cycle 2 is an ancestor",
+    )
+    assert "### Cycle 01" in recovered
+    assert "### Latent Findings" in recovered
+    assert "[F-3] [LOW] Masked authorization failure" in recovered
+    assert "### Cycle 02" in recovered
+    assert "Earlier [F-3] closed" in recovered

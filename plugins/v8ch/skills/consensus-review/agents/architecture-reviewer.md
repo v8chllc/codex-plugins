@@ -56,15 +56,17 @@ consensus-review skill directory. You never receive another reviewer's output.
    terms:
    - **CRITICAL:** a boundary violation that makes a security or data-integrity
      invariant unenforceable.
-   - **HIGH:** coupling or a missing seam that forces a breaking change across
-     modules to deliver an expected next change.
-   - **MEDIUM:** complexity, duplication, or a leaked abstraction with a
-     demonstrable maintenance cost.
-   - **LOW:** dead code, a naming or layering inconsistency, or structure that
-     is merely unidiomatic.
+   - **HIGH:** coupling or a missing seam that breaks a current cross-module
+     operation on a normal reachable path.
+   - **MEDIUM:** an architectural boundary gap causing an in-bound failure on a
+     reachable edge case or less common path.
+   - **LOW:** an architectural boundary gap causing a minor in-bound consequence
+     on a reachable path.
 
-   Reviewer count is decided downstream and never affects your severity. Apply
-   the finding boundary before assigning severity.
+   An observation whose only consequence is maintenance cost, convention, style
+   or structure goes in `Noted` at any size. No grade applies to an unreachable
+   trigger. Reviewer count is decided downstream and never affects your severity.
+   Apply the finding boundary before assigning severity.
 
 ## Constraints and authority
 

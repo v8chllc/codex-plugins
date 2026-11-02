@@ -101,6 +101,31 @@ def test_synthesizer_is_read_only_and_owns_status() -> None:
         assert f"`{status}`" in text
 
 
+@pytest.mark.parametrize("name", ("standards-reviewer", "architecture-reviewer"))
+def test_severity_scale_uses_reachable_consequences(name: str) -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents" / f"{name}.md").read_text(encoding="utf-8")
+    scale = normalized(
+        text.split("**Grade severity", 1)[1].split("## Constraints", 1)[0]
+    )
+    for grade in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        assert f"**{grade}:**" in scale
+    assert "**MEDIUM:**" in scale and "reachable edge case or less common path" in scale
+    assert "**LOW:**" in scale and "minor in-bound consequence" in scale
+    grade_text = scale.split("An observation whose only consequence", 1)[0]
+    assert "maintenance cost" not in grade_text
+    assert (
+        "An observation whose only consequence is maintenance cost, convention, "
+        "style or structure goes in `Noted` at any size." in scale
+    )
+
+
+@pytest.mark.parametrize("path", PROSE_ASSETS, ids=asset_id)
+def test_current_review_assets_do_not_grade_unreachable_gaps(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert "Latent Findings" not in text
+    assert "would-be failure" not in text
+
+
 @pytest.mark.parametrize(
     "name", ("standards-reviewer", "correctness-reviewer", "architecture-reviewer")
 )
