@@ -64,8 +64,11 @@ consensus-review skill directory. You never receive another reviewer's output.
      on a reachable path.
 
    An observation whose only consequence is maintenance cost, convention, style
-   or structure goes in `Noted` at any size. No grade applies to an unreachable
-   trigger. Reviewer count is decided downstream and never affects your severity.
+   or structure goes in `Noted` at any size. A missing seam that would force a
+   breaking cross-module change only to deliver an expected next change also
+   goes in `Noted`; name the current safe condition: present operations do not
+   require that seam. No grade applies to an unreachable trigger. Reviewer
+   count is decided downstream and never affects your severity.
    Apply the finding boundary before assigning severity.
 
 ## Constraints and authority
