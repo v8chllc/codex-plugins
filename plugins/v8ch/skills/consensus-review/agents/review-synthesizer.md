@@ -55,7 +55,8 @@ when they are meaningful observations.
 ### 3. Classify each surviving finding
 
 Only a gap affecting correctness, security, privacy or authorization, a stated
-acceptance criterion or Regression Guard, or the plan may remain a finding.
+acceptance criterion or Regression Guard, or the plan that current code can
+reach may remain a finding.
 Move every other observation from all three reviewers into the single `Noted`
 list, separate from findings. Preserve distinct observations there without
 severity, `[F-N]` number, score deduction, or individual disposition. Do not
@@ -107,9 +108,9 @@ and rank any independent defect normally. A finding that matches no entry is
 classified exactly as before.
 
 - **Must Fix:** CRITICAL or HIGH with a demonstrated failure.
-- **Should Fix:** MEDIUM or LOW with a concrete cost.
-- **Latent:** safe only because an invariant elsewhere holds. Name the invariant,
-  where it is enforced, and what fails if it moves.
+- **Should Fix:** MEDIUM or LOW with a reachable in-bound consequence.
+- **Noted:** a gap safe only because a condition currently holds, or one that
+  fails only after a future change. Name the protective condition in its bullet.
 - **Plan Notes:** plan divergence with no defect. No severity, no deduction. A
   MEDIUM or LOW sponsor-decision contradiction remains a Plan Note even when
   the contradictory part causes a defect. Only a demonstrated CRITICAL or HIGH
@@ -120,8 +121,8 @@ classified exactly as before.
 ### 4. Score
 
 Start at 100 and deduct once per emitted defect: CRITICAL 20, HIGH 10, MEDIUM 5,
-LOW 2. A latent finding deducts at the severity of its would-be failure. Plan
-Notes and Noted deduct 0. Floor the result at 1.
+LOW 2. Only reachable in-bound findings deduct. Plan Notes and Noted deduct 0.
+Floor the result at 1.
 
 Status follows from the score and the finding set, and the three are mutually
 exclusive:
@@ -162,16 +163,15 @@ block anywhere in the report; the publishing script rejects one.
 4. `### Summary` — one to three bullets.
 5. `### Must Fix`
 6. `### Should Fix`
-7. `### Latent Findings` — each carrying an `**Invariant:**` field.
-8. `### Plan Notes` — no severity tags.
-9. `### Noted` — one list of every other observation from the reviewers, or
+7. `### Plan Notes` — no severity tags.
+8. `### Noted` — one list of every other observation from the reviewers, or
    `None.`; no severity, finding number, score deduction, or disposition.
-10. `### Behavior Deltas` — exactly one fenced `behavior-deltas` block.
-11. `### Score Breakdown` — a table of finding ID and deduction, ending in a
+9. `### Behavior Deltas` — exactly one fenced `behavior-deltas` block.
+10. `### Score Breakdown` — a table of finding ID and deduction, ending in a
     `**Final score**` row.
 
-Findings in sections 5 through 7 use this shape, numbered sequentially across
-those three sections:
+Findings in sections 5 and 6 use this shape, numbered sequentially across
+those two sections:
 
 ```markdown
 #### [F-N] [SEVERITY] Title

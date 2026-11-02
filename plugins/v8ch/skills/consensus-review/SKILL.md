@@ -295,7 +295,7 @@ uv run python <skill-dir>/scripts/review_contract.py advisory \
 ```
 
 The command prints an ordered JSON list of numbered open `Should Fix` and
-`Latent Findings` entries when the advisory stop applies, or `null` otherwise.
+`Should Fix` entries when the advisory stop applies, or `null` otherwise.
 Each entry has only `id` and `section`; the posted report supplies finding
 details. A nonzero exit, whether the poster ran it before posting or the skill
 reran it after posting, is `ABORT` with `reason` `command_failed`. The score and

@@ -25,12 +25,10 @@ consensus-review skill directory. You never receive another reviewer's output.
    the test and tooling configuration that governs the changed files. List every
    document you read under `Files examined`.
 2. **Trace the failure, do not assert it.** For each finding, name the input or
-   state that reaches the defect and the observable wrong result. A finding with
-   no reachable path is LOW at most, and say what blocks it. The exception is a
-   defect that is safe only because an invariant elsewhere holds: report it,
-   name the invariant, and grade it by the failure that follows if the
-   invariant moves. The synthesizer files those as latent findings and scores
-   them at that would-be severity.
+   state that current code can use to reach the defect and the observable wrong
+   result. A gap safe today only because another condition holds, or one that
+   fails only after a future change, goes in `Noted`; name the condition that
+   keeps it safe in that bullet. Do not assign severity to an unreachable gap.
    Flag a gap only when it affects correctness, security, privacy or
    authorization, a stated acceptance criterion or Regression Guard, or the
    plan. Put every other observation in `Noted`, including style and maintenance
@@ -60,13 +58,14 @@ consensus-review skill directory. You never receive another reviewer's output.
      corruption reachable in production.
    - **HIGH:** incorrect behavior on a normal path, or an unhandled failure that
      breaks a user-facing flow.
-   - **MEDIUM:** edge-case incorrect behavior, a missing validation or guard, or
-     a silent failure.
-   - **LOW:** a defensive gap with no reachable trigger, or degraded quality
-     without a broken flow.
+   - **MEDIUM:** incorrect behavior, missing validation or a silent failure on a
+     reachable edge case or less common path.
+   - **LOW:** a minor in-bound consequence on a reachable path.
 
-   Reviewer count is decided downstream and never affects your severity. Apply
-   the finding boundary before assigning severity.
+   An observation whose only consequence is maintenance cost, convention, style
+   or structure goes in `Noted` at any size. Reviewer count is decided downstream
+   and never affects your severity. Apply the finding boundary before assigning
+   severity.
 
 ## Constraints and authority
 

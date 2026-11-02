@@ -61,11 +61,15 @@ consensus-review skill directory. You never receive another reviewer's output.
    - **CRITICAL:** a violation that disables a security or safety control.
    - **HIGH:** a violation that breaks the build, the gate, or a published
      interface contract.
-   - **MEDIUM:** a violation of a stated rule with a concrete maintenance cost.
-   - **LOW:** a stated-rule violation with no reachable consequence.
+   - **MEDIUM:** a stated-rule violation causing an in-bound failure on a
+     reachable edge case or less common path.
+   - **LOW:** a stated-rule violation causing a minor in-bound consequence on a
+     reachable path.
 
-   Reviewer count is decided downstream and never affects your severity. Apply
-   the finding boundary before assigning severity.
+   An observation whose only consequence is maintenance cost, convention, style
+   or structure goes in `Noted` at any size. No grade applies to an unreachable
+   trigger. Reviewer count is decided downstream and never affects your severity.
+   Apply the finding boundary before assigning severity.
 
 ## Constraints and authority
 
