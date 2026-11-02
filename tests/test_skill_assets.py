@@ -363,7 +363,7 @@ def test_installation_documents_parallel_capacity_and_fallback() -> None:
     assert "retained builder" in installation
     assert "review agent, and three reviewers" in installation
     assert "`~/.codex/config.toml`" in installation
-    assert "[agents]\nmax_concurrent_threads_per_session = 6" in installation
+    assert "[agents]\nmax_concurrent_threads_per_session = 24" in installation
     assert "all\nthree reviewers in `sequential-fallback`" in installation
 
 
