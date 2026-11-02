@@ -119,6 +119,23 @@ def test_severity_scale_uses_reachable_consequences(name: str) -> None:
     )
 
 
+def test_architecture_future_only_missing_seam_is_noted() -> None:
+    text = (CONSENSUS_REVIEW_DIR / "agents" / "architecture-reviewer.md").read_text(
+        encoding="utf-8"
+    )
+    scale = normalized(
+        text.split("**Grade severity", 1)[1].split("## Constraints", 1)[0]
+    )
+    high = scale.split("**HIGH:**", 1)[1].split("**MEDIUM:**", 1)[0]
+    assert "breaks a current cross-module operation" in high
+    assert "expected next change" not in high
+    assert (
+        "A missing seam that would force a breaking cross-module change only to "
+        "deliver an expected next change also goes in `Noted`" in scale
+    )
+    assert "present operations do not require that seam" in scale
+
+
 @pytest.mark.parametrize("path", PROSE_ASSETS, ids=asset_id)
 def test_current_review_assets_do_not_grade_unreachable_gaps(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
