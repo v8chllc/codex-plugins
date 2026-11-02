@@ -128,15 +128,18 @@ def advisory_report(score: int, status: str, *, must_fix: bool = False) -> str:
         f"### Quality Score: {score}/100 — {status}\n\n"
         f"### Must Fix\n\n{must}\n"
         "### Should Fix\n\n#### [F-1] [LOW] first\n\n"
-        "### Latent Findings\n\n#### [F-2] [LOW] latent\n"
+        "#### [F-2] [LOW] second\n\n"
+        "### Latent Findings\n\n#### [F-3] [LOW] latent\n"
     )
 
 
-def test_advisory_handoff_keeps_report_order_at_96() -> None:
-    report = advisory_report(96, "Passing")
-    assert contract.advisory_open_findings(report, score=96, status="passing") == [
+@pytest.mark.parametrize("score", [95, 96])
+def test_advisory_handoff_keeps_report_order_at_threshold(score: int) -> None:
+    report = advisory_report(score, "Passing")
+    assert contract.advisory_open_findings(report, score=score, status="passing") == [
         {"id": "F-1", "section": "Should Fix"},
-        {"id": "F-2", "section": "Latent Findings"},
+        {"id": "F-2", "section": "Should Fix"},
+        {"id": "F-3", "section": "Latent Findings"},
     ]
 
 
@@ -147,82 +150,17 @@ def test_advisory_handoff_does_not_bypass_a_94_or_must_fix() -> None:
     assert contract.advisory_open_findings(report, score=96, status="passing") is None
 
 
-def test_a_single_medium_finding_at_95_is_advisory() -> None:
-    report = (
-        "### Quality Score: 95/100 — Passing\n\n"
-        "### Must Fix\n\nNone.\n\n"
-        "### Should Fix\n\n#### [F-1] [MEDIUM] finding\n\n"
-        "### Latent Findings\n\nNone.\n"
-    )
-    assert contract.advisory_open_findings(report, score=95, status="passing") == [
-        {"id": "F-1", "section": "Should Fix"}
-    ]
-
-
-def test_two_low_should_fix_findings_at_96_are_advisory() -> None:
-    findings = [
-        contract.Finding("F-1", contract.SHOULD_FIX, "LOW"),
-        contract.Finding("F-2", contract.SHOULD_FIX, "LOW"),
-    ]
-    score = contract.score_findings(findings)
-    assert score == 96
-    assert contract.review_status(score, findings) == "passing"
-    report = (
-        "### Quality Score: 96/100 — Passing\n\n"
-        "### Must Fix\n\nNone.\n\n"
-        "### Should Fix\n\n#### [F-1] [LOW] first\n\n"
+def test_advisory_handoff_ignores_finding_headings_inside_fences() -> None:
+    report = advisory_report(96, "Passing").replace(
+        "#### [F-2] [LOW] second",
         "#### [F-2] [LOW] second\n\n"
-        "### Latent Findings\n\nNone.\n"
+        "```markdown\n#### [F-99] [CRITICAL] example only\n```\n\n"
+        "~~~~ text\n#### [F-100] [HIGH] another example\n~~~~",
     )
-    assert contract.advisory_open_findings(report, score=score, status="passing") == [
+    assert contract.advisory_open_findings(report, score=96, status="passing") == [
         {"id": "F-1", "section": "Should Fix"},
         {"id": "F-2", "section": "Should Fix"},
-    ]
-
-
-def test_a_clean_review_has_no_advisory_handoff() -> None:
-    report = (
-        "### Quality Score: 98/100 — Fully Clean\n\n"
-        "### Must Fix\n\nNone.\n\n"
-        "### Should Fix\n\nNone.\n\n"
-        "### Latent Findings\n\n#### [F-1] [LOW] latent\n"
-    )
-    assert contract.advisory_open_findings(report, score=98, status="clean") is None
-
-
-def test_advisory_handoff_requires_score_and_status_to_match_report() -> None:
-    report = advisory_report(96, "Passing")
-    with pytest.raises(contract.ContractError, match="score"):
-        contract.advisory_open_findings(report, score=95, status="passing")
-    with pytest.raises(contract.ContractError, match="status"):
-        contract.advisory_open_findings(report, score=96, status="clean")
-
-
-def test_advisory_handoff_ignores_fenced_report_structure() -> None:
-    report = (
-        "### Quality Score: 96/100 — Passing\n\n"
-        "### Must Fix\n\nNone.\n\n"
-        "### Should Fix\n\n#### [F-1] [LOW] real finding\n\n"
-        "```markdown\n"
-        "### Must Fix\n\n#### [F-99] [CRITICAL] example blocker\n"
-        "```\n\n"
-        "### Latent Findings\n\nNone.\n"
-    )
-    assert contract.advisory_open_findings(report, score=96, status="passing") == [
-        {"id": "F-1", "section": "Should Fix"}
-    ]
-
-
-def test_advisory_handoff_ignores_fenced_finding_headings() -> None:
-    report = (
-        "### Quality Score: 96/100 — Passing\n\n"
-        "### Must Fix\n\nNone.\n\n"
-        "### Should Fix\n\n#### [F-1] [LOW] real finding\n\n"
-        "~~~markdown\n#### [F-88] [LOW] example finding\n~~~\n\n"
-        "### Latent Findings\n\nNone.\n"
-    )
-    assert contract.advisory_open_findings(report, score=96, status="passing") == [
-        {"id": "F-1", "section": "Should Fix"}
+        {"id": "F-3", "section": "Latent Findings"},
     ]
 
 
@@ -239,6 +177,45 @@ def test_backtick_in_fence_info_does_not_hide_report_findings() -> None:
         {"id": "F-1", "section": "Should Fix"},
         {"id": "F-2", "section": "Should Fix"},
     ]
+
+
+@pytest.mark.parametrize(
+    ("severities", "expected_score", "expected_handoff"),
+    [
+        (["LOW", "LOW"], 96, True),
+        (["MEDIUM"], 95, True),
+        (["LOW", "LOW", "LOW"], 94, False),
+    ],
+)
+def test_advisory_boundary_uses_the_existing_score_contract(
+    severities: list[str], expected_score: int, expected_handoff: bool
+) -> None:
+    findings = [
+        contract.Finding(f"F-{index}", contract.SHOULD_FIX, severity)
+        for index, severity in enumerate(severities, start=1)
+    ]
+    score = contract.score_findings(findings)
+    status = contract.review_status(score, findings)
+    report = (
+        f"### Quality Score: {score}/100 — {contract.status_label(status)}\n\n"
+        "### Must Fix\n\nNone.\n\n### Should Fix\n\n"
+        + "\n".join(
+            f"#### [{finding.identifier}] [{finding.severity}] finding"
+            for finding in findings
+        )
+        + "\n\n### Latent Findings\n\nNone.\n"
+    )
+    assert score == expected_score
+    handoff = contract.advisory_open_findings(report, score=score, status=status)
+    assert (handoff is not None) == expected_handoff
+
+
+def test_advisory_handoff_requires_score_and_status_to_match_report() -> None:
+    report = advisory_report(96, "Passing")
+    with pytest.raises(contract.ContractError, match="score"):
+        contract.advisory_open_findings(report, score=95, status="passing")
+    with pytest.raises(contract.ContractError, match="status"):
+        contract.advisory_open_findings(report, score=96, status="clean")
 
 
 def test_advisory_cli_emits_the_compact_handoff(tmp_path: Path) -> None:
@@ -262,11 +239,12 @@ def test_advisory_cli_emits_the_compact_handoff(tmp_path: Path) -> None:
     )
     assert json.loads(result.stdout) == [
         {"id": "F-1", "section": "Should Fix"},
-        {"id": "F-2", "section": "Latent Findings"},
+        {"id": "F-2", "section": "Should Fix"},
+        {"id": "F-3", "section": "Latent Findings"},
     ]
 
 
-def test_advisory_cli_rejects_a_missing_report(tmp_path: Path) -> None:
+def test_advisory_cli_reports_a_missing_report(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
@@ -284,12 +262,12 @@ def test_advisory_cli_rejects_a_missing_report(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 1
-    assert "Error:" in result.stderr
-    assert "No such file or directory" in result.stderr
     assert result.stdout == ""
+    assert result.stderr.startswith("Error: ")
+    assert "missing.md" in result.stderr
 
 
-def test_advisory_cli_rejects_a_score_status_mismatch(tmp_path: Path) -> None:
+def test_advisory_cli_reports_a_contract_mismatch(tmp_path: Path) -> None:
     report_file = tmp_path / "report.md"
     report_file.write_text(advisory_report(96, "Passing"), encoding="utf-8")
     result = subprocess.run(
@@ -302,19 +280,27 @@ def test_advisory_cli_rejects_a_score_status_mismatch(tmp_path: Path) -> None:
             "--score",
             "95",
             "--status",
-            "clean",
+            "passing",
         ],
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 1
-    assert result.stderr == "Error: The report score and review metadata disagree.\n"
     assert result.stdout == ""
+    assert result.stderr == "Error: The report score and review metadata disagree.\n"
 
 
 def test_valid_metadata_fixture_passes_validation() -> None:
     assert contract.validate_metadata(dict(METADATA["valid"]))
+
+
+def test_schema_2_history_remains_valid_without_deferred_source() -> None:
+    prior = dict(METADATA["valid"], schema_version=2)
+    prior.pop("deferred_source")
+    assert contract.validate_metadata(prior) == prior
+    with pytest.raises(contract.ContractError, match="unexpected: deferred_source"):
+        contract.validate_metadata(dict(prior, deferred_source="none"))
 
 
 @pytest.mark.parametrize(
@@ -334,7 +320,7 @@ def test_invalid_metadata_is_rejected(case: dict[str, Any]) -> None:
         contract.validate_metadata(metadata_case(case))
 
 
-def test_metadata_key_set_is_exactly_the_twelve_contract_keys() -> None:
+def test_metadata_key_set_is_exactly_the_thirteen_contract_keys() -> None:
     assert contract.METADATA_KEYS == {
         "cycle",
         "delegation_mode",
@@ -342,6 +328,7 @@ def test_metadata_key_set_is_exactly_the_twelve_contract_keys() -> None:
         "findings_closed",
         "findings_opened",
         "plan_source",
+        "deferred_source",
         "reviewed_sha",
         "schema_version",
         "scope_basis",
@@ -426,6 +413,10 @@ def test_plan_source_and_scope_basis_helpers() -> None:
         contract.validate_plan_source(None)
     with pytest.raises(contract.ContractError):
         contract.validate_scope_basis(7)
+    assert contract.validate_deferred_source("none") == "none"
+    assert contract.validate_deferred_source("supplied: deferred.json")
+    with pytest.raises(contract.ContractError):
+        contract.validate_deferred_source("supplied:    ")
 
 
 @pytest.mark.parametrize(

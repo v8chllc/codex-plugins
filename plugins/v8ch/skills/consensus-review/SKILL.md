@@ -45,8 +45,9 @@ ends with exactly one terminal signal.
    part of the local review scope. Run the local checks below before workflow
    step 1.
 
-For a local review, accept a plan file and acceptance criteria and Regression
-Guards as text or files, each identified as that input by the caller. Ignore a
+For a local review, accept a plan file, a file identified as the `deferred`
+input, and acceptance criteria and Regression Guards as text or files, each
+identified as that input by the caller. Ignore a
 single-cycle cap or `review_budget: single_cycle` on a local review. Every
 other argument is an unsupported scope argument, including a commit SHA, a
 branch name or range, a list of paths, and a path not identified as an accepted
@@ -78,6 +79,15 @@ source as the literal `none`, or as
 provenance and in the `plan_source` metadata field. Plan context is never
 recovered from PR/MR comments.
 
+**Deferred** — optional caller-supplied `deferred` JSON text or a file path,
+identified as that input; read a file in full. A local review accepts a
+`deferred` file only. It is never recovered from PR/MR comments. The value is
+an array of objects with non-empty string `summary` and `reason`, `work_item`
+as string or null, and optional `repository` as an `owner/repo` string or null.
+Array positions are 1-based entry numbers. A null or omitted repository is
+run-wide; a named repository must be the reviewed repository. Only the
+synthesizer consumes this input. Reviewers and the fixer receive none.
+
 **Acceptance criteria and Regression Guards** — optional caller-supplied text or
 files containing the run's stated criteria and guards. Keep their wording and
 identifiers intact. When absent, use `none`; never infer them from the diff,
@@ -99,6 +109,16 @@ the field is absent, the default budget remains three reviews per invocation.
 **Script paths** — this skill's scripts are referenced as `scripts/<name>.py`,
 resolved against the directory holding this file into an absolute path before
 running. Pass that absolute skill directory to every role.
+
+## Plan handling
+
+Record the plan source as `none` when absent, otherwise
+`supplied: <path or short description>`. Record the `deferred` source as `none`
+when the input is absent or an empty array, otherwise
+`supplied: <path or short description>`. Put the latter in Run Provenance and
+the `deferred_source` metadata, and pass it to the synthesizer and poster;
+only the synthesizer receives the input itself. Never recover `deferred` from
+PR/MR comments.
 
 ## Roles and delegation
 
@@ -143,7 +163,8 @@ pass receives exactly the inputs its parallel counterpart would:
   acceptance criteria, the Regression Guards, the recovered history, and the
   skill directory — never another reviewer's output;
 - the synthesizer pass gets all three reviewer outputs, the delegation mode, the
-  plan source, the acceptance criteria, and the Regression Guards;
+  plan source, the `deferred` input and its source, the reviewed repository,
+  the acceptance criteria, and the Regression Guards;
 - the poster and fixer passes get the synthesized report plus their own inputs;
   the fixer also gets the plan, acceptance criteria, and Regression Guards.
 
@@ -234,8 +255,9 @@ not to write, rather than relying on this check alone.
 ### 8. Synthesize
 
 Run `review-synthesizer` with all three reviewer outputs labeled in full, the
-delegation mode, the plan source, the acceptance criteria, the Regression
-Guards, and `RECOVERED_CONTEXT`. Repeat step 7
+delegation mode, the plan source, the `deferred` input and its source, the
+reviewed repository, the acceptance criteria, the Regression Guards, and
+`RECOVERED_CONTEXT`. Repeat step 7
 afterwards.
 
 The synthesizer applies the same evidence gate as step 6. If it returns
@@ -252,7 +274,8 @@ and stop without a score.
 range. A local review never fixes.
 
 **PR/MR:** run `consensus-review-poster` once with the report, the PR/MR number,
-the cycle, the status, the delegation mode, the plan source, the reviewed SHA,
+the cycle, the status, the delegation mode, the plan source, the deferred
+source, the reviewed SHA,
 the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
 counts, the repository directory, and the absolute skill directory. A posting
 failure is `ABORT` with `reason` `post_failed`.

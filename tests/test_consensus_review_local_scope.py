@@ -25,8 +25,8 @@ def test_local_inputs_and_ordered_preflight() -> None:
     skill = skill_text()
     inputs = skill.split("**Review scope**", 1)[1].split("**Local checks**", 1)[0]
     checks = skill.split("**Local checks**", 1)[1].split("**Plan**", 1)[0]
-    assert "plan file and acceptance criteria and Regression" in inputs
-    assert "Guards as text or files, each identified as that input" in inputs
+    assert "plan file, a file identified as the `deferred`" in inputs
+    assert "Guards as text or files, each\nidentified as that input" in inputs
     assert "Ignore a\nsingle-cycle cap or `review_budget: single_cycle`" in inputs
     for phrase in (
         "commit SHA",
