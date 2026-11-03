@@ -10,10 +10,8 @@ def test_skill_accepts_deferred_and_routes_it_only_to_synthesizer() -> None:
     inputs = skill.split("## Inputs\n", 1)[1].split("## Plan handling\n", 1)[0]
     for phrase in (
         "caller-supplied `deferred` JSON text or a file path",
-        "A local review accepts a\n`deferred` file only",
         "never recovered from PR/MR comments",
         "Only the\nsynthesizer consumes this input",
-        "a file identified as the `deferred`",
     ):
         assert phrase in inputs
     handling = skill.split("## Plan handling\n", 1)[1].split(

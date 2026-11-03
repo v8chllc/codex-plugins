@@ -449,7 +449,7 @@ def test_skill_routes_posting_and_advisory_results_in_order() -> None:
         "A posting failure is `ABORT` with `reason` `post_failed`"
         in post_or_return_normalized
     )
-    assert "A local review never fixes" in post_or_return
+    assert "**No PR/MR:**" not in post_or_return
     assert "is `ABORT` with `reason` `command_failed`" in post_or_return
     branch_normalized = normalized(branch)
     assert "on every cycle" in branch_normalized

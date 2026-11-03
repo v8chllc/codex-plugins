@@ -9,7 +9,7 @@ No fix-validation comment is posted. The commit body is the record.
 
 ## Prerequisite
 
-This workflow is PR/MR-only. A local review never fixes. The current review is
+This workflow is PR/MR-only. The current review is
 the synthesized report from the cycle that just posted; the PR/MR thread is the
 durable history, recovered with:
 
