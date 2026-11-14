@@ -130,6 +130,28 @@ path. Pass that same absolute skill directory to every role.
    Give each the same complete net diff, merge-commit identity, repository
    context and this skill's absolute skill directory. The copies are the
    existing role prompts unchanged; never generate or modify their contents.
+   Append the following invocation-specific context after each unchanged prompt,
+   for every initial, fallback and retry invocation; fresh roles do not inherit
+   this skill's authority boundaries:
+
+   - Pass the actual prepared repository root, merge SHA, absolute reserved
+     run directory and resolved artifact-helper path. Restrict checks to the
+     caller-prepared compatible dependencies and safe selected-check environment,
+     with any explicit workspace/database-reuse authorization and its limits.
+   - For this invocation, generic role directions to install dependencies or
+     write external scratch are narrowed: do not install tools/dependencies,
+     fetch, switch or repair the checkout, reset databases, or restore backups.
+     Do not let a check bootstrap missing dependencies. Leave unprepared or
+     unsafe checks unrun and name the concrete readiness/coverage gap; never
+     imply they passed. Existing evidence-gate requirements still apply.
+   - Write temporary evidence only in the supplied ignored run directory, with
+     role-prefixed names. Before every output, run the resolved artifact helper's
+     `check <relative-output-path>` against the supplied repository root and
+     create the file exclusively. No outside scratch writes or source,
+     environment, ignore-rule, input-report or private-backup changes are
+     authorized. If a check cannot keep its effects within these boundaries,
+     leave it unrun and report the gap. Return the review text directly.
+
    No plan, deferred input or recovered review history is supplied: record those sources as `none`. Apply the
    consensus-review finding bound and scoring unchanged. Keep observations
    outside correctness, security, privacy, authorization, stated criteria,
@@ -147,8 +169,12 @@ path. Pass that same absolute skill directory to every role.
    `agents/review-synthesizer.md` and invoke `review-synthesizer` with that prompt,
    each full labeled output, delegation mode, reviewed repository, plan source
    `none`, deferred input absent and source `none`, no recovered history, and
-   this skill's absolute directory. The synthesizer alone decides
-   score and status. Its `### Review Status: FAILED` response names failed
+   this skill's absolute directory. Append the complete invocation-specific
+   context from step 3, including the actual prepared environment, reserved run
+   directory, resolved guard path and exclusive-output restrictions; do this
+   again for every synthesis retry. Its fresh context must receive these limits
+   explicitly, not an assumption that it read the parent skill. The synthesizer
+   alone decides score and status. Its `### Review Status: FAILED` response names failed
    passes: retry each at most once across both gates, then synthesize again.
    A second failure ends with `EVIDENCE_FAILED`. Recheck the snapshot after
    synthesis; mutation aborts with `command_failed`. No poster or fixer runs.
