@@ -39,7 +39,7 @@ def test_every_fresh_role_receives_post_merge_authority_context() -> None:
     for restriction in (
         "Append the following invocation-specific context after each unchanged prompt",
         "every initial, fallback and retry invocation",
-        "actual prepared repository root, merge SHA, absolute reserved run directory",
+        "actual prepared repository root, merge SHA, absolute external run directory",
         "caller-prepared compatible dependencies and safe selected-check environment",
         "explicit workspace/database-reuse authorization and its limits",
         "generic role directions to install dependencies or write external scratch "
@@ -50,14 +50,12 @@ def test_every_fresh_role_receives_post_merge_authority_context() -> None:
         "Existing evidence-gate requirements still apply",
         "only in the supplied external run directory",
         "role-prefixed names",
-        "`check --run-dir <run-dir> <absolute-output-path>`",
-        "create the file exclusively",
         "No outside scratch writes",
         "private-backup changes",
     ):
         assert restriction in reviewers
     synthesizer = text.split("5. **Synthesize once evidence passes.**")[1].split(
-        "6. **Format, validate and return.**"
+        "6. **Format, validate, post and return.**"
     )[0]
     assert "Append the complete invocation-specific context from step 3" in synthesizer
     assert "every synthesis retry" in synthesizer

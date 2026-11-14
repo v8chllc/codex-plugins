@@ -43,7 +43,7 @@ def test_review_role_wiring_and_unchanged_evidence_gate() -> None:
         "sequential-fallback",
         "No poster or fixer runs",
         "unchanged",
-        "posts nothing and changes nothing",
+        "posts its report and changes no source",
         "snapshot",
     ):
         assert phrase in review
