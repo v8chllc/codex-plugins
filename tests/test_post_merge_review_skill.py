@@ -43,7 +43,7 @@ def test_review_role_wiring_and_unchanged_evidence_gate() -> None:
         "sequential-fallback",
         "No poster or fixer runs",
         "unchanged",
-        "posts its report and changes no source",
+        "Post the complete review through Report comments",
         "snapshot",
     ):
         assert phrase in review
@@ -79,21 +79,23 @@ def test_terminal_signal_contract() -> None:
 
 
 def test_triage_is_read_only_vetted_and_checkpointed() -> None:
-    triage = text().split("## Triage run\n")[1].split("## Review terminal signals\n")[0]
+    triage = " ".join(
+        text().split("## Triage run\n")[1].split("## Report comments\n")[0].split()
+    )
     for phrase in (
         "validate <report>",
         "Invalid input stops",
-        "merge commit",
+        "recorded merge code",
         "report order",
-        "reported",
-        "severity",
+        "Verification's claim rules",
+        "severity alignment",
         "Urgent follow-up",
         "Routine follow-up",
         "Optional follow-up",
         "No action",
         "never raises",
         "read-only",
-        "never creates a tracker",
+        "Triage posts nothing",
         "Stop for sponsor approval after each drafted follow-up",
         "no switch that disables vetting or severity alignment",
         "Noted",
@@ -102,5 +104,5 @@ def test_triage_is_read_only_vetted_and_checkpointed() -> None:
         "never learns where follow-ups are filed",
     ):
         assert phrase in triage
-    assert "`### Must Fix` starts at\n   `Urgent follow-up`" in triage
+    assert "`### Must Fix` starts at `Urgent follow-up`" in triage
     assert "`### Should Fix` starts at `Routine follow-up`" in triage

@@ -25,8 +25,8 @@ def test_only_four_roles_ship_and_wiring_resolves_installed_assets() -> None:
     assert {path.stem for path in (skill / "agents").glob("*.md")} == set(ROLES)
     text = (skill / "SKILL.md").read_text(encoding="utf-8")
     assert "available-skills catalog" in text
-    assert "absolute path before use" in text
-    assert "full prompt contents followed by its inputs" in text
+    assert "against it into an absolute path" in text
+    assert "unchanged full prompt and" in text
     for role in ROLES:
         assert f"agents/{role}.md" in text
 
@@ -34,30 +34,23 @@ def test_only_four_roles_ship_and_wiring_resolves_installed_assets() -> None:
 def test_every_fresh_role_receives_post_merge_authority_context() -> None:
     text = " ".join((ROOT / "post-merge-review/SKILL.md").read_text().split())
     reviewers = text.split("3. **Delegate independent reviews.**")[1].split(
-        "4. **Apply the evidence gate unchanged.**"
+        "4. **Apply the evidence gate.**"
     )[0]
     for restriction in (
-        "Append the following invocation-specific context after each unchanged prompt",
-        "every initial, fallback and retry invocation",
-        "actual prepared repository root, merge SHA, absolute external run directory",
-        "caller-prepared compatible dependencies and safe selected-check environment",
-        "explicit workspace/database-reuse authorization and its limits",
-        "generic role directions to install dependencies or write external scratch "
-        "are narrowed",
-        "do not install tools/dependencies",
-        "Do not let a check bootstrap missing dependencies",
-        "Leave unprepared or unsafe checks unrun",
-        "Existing evidence-gate requirements still apply",
-        "only in the supplied external run directory",
-        "role-prefixed names",
-        "No outside scratch writes",
-        "private-backup changes",
+        "Append this invocation context to every role and synthesizer prompt, "
+        "including retries",
+        "Actual repository root, merge SHA, external run directory",
+        "caller-prepared dependencies/check environment with any reuse limits",
+        "No installation, dependency bootstrapping, fetching, ref switching",
+        "checkout repair, database reset or backup restoration",
+        "Leave unprepared or unsafe checks unrun and name gaps without claiming a pass",
+        "Temporary files only in that directory with role-prefixed names",
+        "no source, environment, ignore-rule, input-report or private-backup changes",
     ):
         assert restriction in reviewers
-    synthesizer = text.split("5. **Synthesize once evidence passes.**")[1].split(
-        "6. **Format, validate, post and return.**"
+    synthesizer = text.split("5. **Synthesize.**")[1].split(
+        "6. **Format, validate and return.**"
     )[0]
-    assert "Append the complete invocation-specific context from step 3" in synthesizer
-    assert "every synthesis retry" in synthesizer
-    assert "fresh context must receive these limits explicitly" in synthesizer
-    assert "The synthesizer alone decides score and status" in synthesizer
+    assert "invocation context from step 3" in synthesizer
+    assert "retry within step 4's limit" in synthesizer
+    assert "The synthesizer alone decides score/status" in synthesizer
