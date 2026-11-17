@@ -32,7 +32,9 @@ max_concurrent_threads_per_session = 24
 ```
 
 With a lower limit, `consensus-review` attempts the parallel batch and runs all
-three reviewers in `sequential-fallback` if the batch cannot run in parallel.
+three reviewers in `sequential-fallback` if the batch cannot run in parallel:
+try role-specific agents one at a time, then isolated inline passes on the
+caller's model when delegation cannot run.
 
 ## Repository Layout
 
