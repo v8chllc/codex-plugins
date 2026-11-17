@@ -331,12 +331,37 @@ def test_skill_is_standalone_and_always_autonomous() -> None:
         assert removed_skill not in text
 
 
-def test_skill_spawns_with_both_model_and_effort() -> None:
+def test_skill_selects_offered_models_once_for_all_six_roles() -> None:
     text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
-    assert '`model: "gpt-5.6-sol"`' in text
-    assert '`reasoning_effort: "medium"`' in text
-    assert "gpt-5.5" not in text
-    assert "`fork_context: false`" in text
+    selection = normalized(markdown_section(text, "**Role model selection.**"))
+    assert "Once per invocation" in selection
+    assert "from the runtime's offered models" in selection
+    assert "reuse those selections through every cycle" in selection
+    for role in ROLE_NAMES:
+        family = "Terra" if role.endswith(("poster", "fixer")) else "Sol"
+        assert f"| `{role}` | {family} |" in selection
+    assert "Explicitly pass the selected model on every spawn" in selection
+    assert "including sequential delegation and evidence reruns" in selection
+    assert "one consistent selected Sol" in selection
+    assert '`reasoning_effort: "medium"`' in selection
+    assert '`fork_turns: "none"`' in selection
+    assert "omit `agent_type`" in selection
+    assert "model-related abort" in selection
+    assert not re.search(r"gpt-\d", text)
+    for asset in PROSE_ASSETS:
+        assert not re.search(r"gpt-\d", asset.read_text(encoding="utf-8"))
+
+
+def test_synthesis_posting_and_fixing_share_the_role_selection_rule() -> None:
+    text = (CONSENSUS_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    for heading in ("### 8. Synthesize", "### 9. Post or return"):
+        assert "common role model selection rule" in normalized(
+            markdown_section(text, heading)
+        )
+    fix = (CONSENSUS_REVIEW_DIR / "references" / "fix-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "common role model selection rule in `SKILL.md`" in normalized(fix)
 
 
 def test_delegation_attempts_parallel_and_handles_absent_spawn() -> None:
@@ -368,9 +393,16 @@ def test_failed_parallel_batch_reruns_all_reviewers_without_mixing() -> None:
     assert "batch cannot complete in parallel" in delegation
     assert "close every reviewer already spawned" in delegation
     assert "discard all outputs from that incomplete batch" in delegation
-    assert "rerun all three reviewers in `sequential-fallback`" in delegation
     assert (
-        "Never combine outputs from the parallel attempt and the sequential rerun"
+        "rerun all three reviewers sequentially as role-specific agents" in delegation
+    )
+    assert "Wait for each to finish and release its capacity" in delegation
+    assert "same selected model and effort" in delegation
+    assert "Record `sequential-fallback` for this serial execution" in delegation
+    assert "discard all outputs from that incomplete serial attempt" in delegation
+    assert "rerun all three inline" in delegation
+    assert (
+        "Never combine outputs from the parallel attempt, a discarded serial attempt"
         in delegation
     )
     assert (
@@ -382,11 +414,15 @@ def test_failed_parallel_batch_reruns_all_reviewers_without_mixing() -> None:
         fallback
     )
     assert "never another reviewer's output" in fallback
+    assert "on the caller's model and effort" in fallback
+    assert "even when that model is neither preferred family" in fallback
+    assert "When `spawn_agent` is absent or delegation cannot run" in fallback
+    assert "Add no reporting fields" in delegation
     assert (
         "Apply the delegation mode rule above if any spawn or the batch fails"
         in workflow
     )
-    assert "sequential rerun uses those same inputs for all three reviewers" in workflow
+    assert "rerun uses those same inputs for all three reviewers" in workflow
 
 
 def test_delegation_does_not_consult_configuration() -> None:
@@ -407,6 +443,8 @@ def test_installation_documents_parallel_capacity_and_fallback() -> None:
     assert "`~/.codex/config.toml`" in installation
     assert "[agents]\nmax_concurrent_threads_per_session = 24" in installation
     assert "all\nthree reviewers in `sequential-fallback`" in installation
+    assert "try role-specific agents one at a time" in installation
+    assert "caller's model when delegation cannot run" in installation
 
 
 def test_skill_documents_every_terminal_signal() -> None:

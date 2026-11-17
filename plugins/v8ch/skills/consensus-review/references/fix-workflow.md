@@ -21,7 +21,8 @@ uv run <skill-dir>/scripts/recover_context.py <number> --repo-dir <repo-root>
 
 ### 1. Run the fixer
 
-Run `consensus-review-fixer` with the synthesized report and its `[F-N]`
+Run `consensus-review-fixer` under the common role model selection rule in
+`SKILL.md`, with the synthesized report and its `[F-N]`
 numbering, the raw score and cycle, the PR/MR number and URL, the repository
 directory, the absolute skill directory, the optional plan, acceptance criteria
 and Regression Guards (`none` when absent), and a scratch directory for the fix

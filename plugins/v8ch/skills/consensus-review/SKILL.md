@@ -103,27 +103,58 @@ The three reviewers are genuinely independent. Run them concurrently when the
 parallel batch succeeds; otherwise run all three sequentially. Wait for all
 three before synthesizing. Nothing else in the run is delegated in parallel.
 
+**Role model selection.** Once per invocation, select the current available Sol
+and Terra model IDs from the runtime's offered models, and reuse those selections
+through every cycle. These are concrete offered IDs, not fixed version pins or
+invented rolling aliases. Use this role map for every delegated execution,
+including sequential delegation and evidence reruns:
+
+| Role | Selected model |
+| --- | --- |
+| `standards-reviewer` | Sol |
+| `correctness-reviewer` | Sol |
+| `architecture-reviewer` | Sol |
+| `review-synthesizer` | Sol |
+| `consensus-review-fixer` | Terra |
+| `consensus-review-poster` | Terra |
+
+Explicitly pass the selected model on every spawn. All delegated reviewers use
+one consistent selected Sol and `reasoning_effort: "medium"`; passing the model
+without the effort resets the child to the model's default effort. Pass the
+asset's full contents followed by exactly that role's inputs as `message`,
+disable inherited context with the runtime's supported option (`fork_context:
+false` or `fork_turns: "none"`), and omit `agent_type`. Keep model-family selection
+here; synthesis, posting and fixing use this same rule. The split is preferred:
+if an offered family cannot be selected or its delegation cannot run, use the
+inline fallback below for that role, without a model-related abort or a model
+fallback chain.
+
 **Delegation mode.** If `spawn_agent` is absent from your tool list, use
 `sequential-fallback`. If it is present, attempt to spawn the complete
 three-reviewer batch. Use `parallel-subagents` only when all three reviewers
 start and complete in parallel. If a spawn is refused or fails because of
 capacity or nesting depth, or the batch cannot complete in parallel, close
 every reviewer already spawned, discard all outputs from that incomplete batch,
-and rerun all three reviewers in `sequential-fallback`. Never combine outputs
-from the parallel attempt and the sequential rerun. Pass the selected mode to
-the synthesizer, which records it in Run Provenance. Decide from tool
-presence and the observed spawn or batch result; never read configuration to
-decide.
+and rerun all three reviewers sequentially as role-specific agents where
+possible, using the same selected model and effort. Wait for each to finish and
+release its capacity before starting the next. Record `sequential-fallback` for
+this serial execution; it covers both sequential delegation and inline passes.
+If sequential delegation cannot complete, close any remaining reviewer agents,
+discard all outputs from that incomplete serial attempt, and rerun all three
+inline. Never combine outputs from the parallel attempt, a discarded serial
+attempt and the inline rerun. Pass the selected mode to the synthesizer, which
+records it in Run Provenance. Decide from tool presence and the observed spawn
+or batch result; never read configuration to decide. Add no reporting fields.
 
-**Spawning (`parallel-subagents`).** Call `spawn_agent` with `message` set to the
-asset's full contents followed by that role's inputs, `fork_context: false`, and
-both `model: "gpt-5.6-sol"` and `reasoning_effort: "medium"`. Passing the model
-without the effort resets the child to the model's default effort. Omit
-`agent_type`.
-
-**Sequential fallback.** Whether `spawn_agent` is absent or a parallel attempt
-fails, run each role as an isolated pass in the main thread, one at a time. Each
-pass receives exactly the inputs its parallel counterpart would:
+**Sequential fallback.** Try role-specific agents one at a time when parallel
+capacity is insufficient but delegation can still run, following the common
+role model selection rule. Run synthesis, posting and fixing sequentially after
+the reviewers; they also delegate using that rule where possible. When
+`spawn_agent` is absent or delegation cannot run, execute the affected role as
+an isolated pass in the caller's thread, on the caller's model and effort,
+even when that model is neither preferred family. A failed reviewer delegation
+attempt restarts the complete three-reviewer set inline as above. Each pass
+receives exactly the inputs its parallel counterpart would:
 
 - a reviewer pass gets the diff, the changed-file context, the plan, the
   acceptance criteria, the Regression Guards, the recovered history, and the
@@ -135,8 +166,7 @@ pass receives exactly the inputs its parallel counterpart would:
   the fixer also gets the plan, acceptance criteria, and Regression Guards.
 
 Keep every completed role output verbatim until the run ends, and discard each
-pass's intermediate reasoning before starting the next. This mode expects the
-session's own model and effort as its baseline: `gpt-5.6-sol` at `medium`.
+pass's intermediate reasoning before starting the next.
 
 ## Workflow
 
@@ -182,7 +212,7 @@ git status --porcelain=v1 --untracked-files=all
 When `spawn_agent` is available, attempt one concurrent batch. Each reviewer
 gets the diff, the changed-file context, the plan, the acceptance criteria, the
 Regression Guards, `RECOVERED_CONTEXT`, and the absolute skill directory. Apply
-the delegation mode rule above if any spawn or the batch fails; the sequential
+the delegation mode rule above if any spawn or the batch fails; every sequential
 rerun uses those same inputs for all three reviewers. With no `spawn_agent`, run
 all three in `sequential-fallback`.
 
@@ -217,7 +247,8 @@ not to write, rather than relying on this check alone.
 
 ### 8. Synthesize
 
-Run `review-synthesizer` with all three reviewer outputs labeled in full, the
+Run `review-synthesizer` under the common role model selection rule with all
+three reviewer outputs labeled in full, the
 delegation mode, the plan source, the `deferred` input and its source, the
 reviewed repository, the acceptance criteria, the Regression Guards, and
 `RECOVERED_CONTEXT`. Repeat step 7
@@ -232,7 +263,8 @@ and stop without a score.
 
 ### 9. Post or return
 
-**PR/MR:** run `consensus-review-poster` once with the report, the PR/MR number,
+**PR/MR:** run `consensus-review-poster` once under the common role model
+selection rule with the report, the PR/MR number,
 the cycle, the status, the delegation mode, the plan source, the deferred
 source, the reviewed SHA,
 the scope basis, the `files_touched`, `findings_opened`, and `findings_closed`
