@@ -40,7 +40,7 @@ def test_marketplace_points_to_valid_plugin_manifest() -> None:
 
     manifest = load_json(plugin_root / ".codex-plugin/plugin.json")
     assert manifest["name"] == entry["name"]
-    assert manifest["version"] == "2.0.20"
+    assert manifest["version"] == "2.0.21"
     assert manifest["description"]
 
 
