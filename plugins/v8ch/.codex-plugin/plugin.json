@@ -1,7 +1,7 @@
 {
   "name": "v8ch",
-  "version": "2.0.21",
-  "description": "Reusable Codex CLI workflows for AI-assisted code review and project memory.",
+  "version": "2.0.22",
+  "description": "Reusable Codex CLI workflows for code review, project memory, and orchestrated delivery.",
   "author": {
     "name": "V8CH LLC",
     "url": "https://github.com/v8chllc"
@@ -20,8 +20,8 @@
   "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "V8CH Codex Workflows",
-    "shortDescription": "Code review and memory workflows for Codex CLI.",
-    "longDescription": "Reusable Codex CLI skills for autonomous consensus code review and project memory workflows.",
+    "shortDescription": "Code review, memory, and orchestration workflows.",
+    "longDescription": "Reusable Codex CLI skills for consensus code review, project memory, and orchestrated delivery workflows.",
     "developerName": "V8CH LLC",
     "category": "Developer Tools",
     "capabilities": [

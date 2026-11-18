@@ -18,8 +18,10 @@ HARDCODED_SKILL_SCRIPT_PATH_RE = re.compile(
     r"|[^\s`'\"]*cache/[^\s`'\"]*/skills/[^\s/`'\"]+/scripts/"
     r"|(?:\.\./)+[A-Za-z0-9][A-Za-z0-9_-]*/scripts/"
 )
+# Preserve the two existing POSIX shell expansions without admitting arbitrary
+# client placeholders or different parameter expansions.
 UNEXPANDED_CODEX_PLACEHOLDER_RE = re.compile(
-    r"\$\{[^}\n]+\}|<[A-Za-z0-9][A-Za-z0-9_-]*-skill-dir>"
+    r"\$\{(?!(?:TMPDIR:-/tmp|LOCK_OWNER:-)\})[^}\n]+\}|<[A-Za-z0-9][A-Za-z0-9_-]*-skill-dir>"
 )
 
 
@@ -79,6 +81,10 @@ def test_path_regex_allows_current_skill_script_references() -> None:
         "<future_skill-skill-dir>",
         "${PLUGIN_ROOT}",
         "${HOME}",
+        "${TMPDIR}",
+        "${TMPDIR:-/other}",
+        "${LOCK_OWNER}",
+        "${LOCK_OWNER:-other}",
     ],
 )
 def test_placeholder_regex_catches_unexpanded_codex_values(
@@ -92,3 +98,10 @@ def test_placeholder_regex_allows_generic_instruction_metavariables(
     metavariable: str,
 ) -> None:
     assert UNEXPANDED_CODEX_PLACEHOLDER_RE.search(metavariable) is None
+
+
+@pytest.mark.parametrize("expansion", ["${TMPDIR:-/tmp}", "${LOCK_OWNER:-}"])
+def test_placeholder_regex_allows_existing_posix_shell_expansions(
+    expansion: str,
+) -> None:
+    assert UNEXPANDED_CODEX_PLACEHOLDER_RE.search(expansion) is None

@@ -36,6 +36,22 @@ three reviewers in `sequential-fallback` if the batch cannot run in parallel:
 try role-specific agents one at a time, then isolated inline passes on the
 caller's model when delegation cannot run.
 
+## Workflow Skills
+
+The `v8ch` plugin includes `consensus-review`, `post-merge-review`, `remember`
+and `recommend`, plus these delivery workflows:
+
+- `chore-orchestrate` — mechanically checkable chores.
+- `change-set-orchestrate` — changes to existing behavior.
+- `feature-orchestrate` — added behavior across participating repositories.
+- `agent-tooling-review` — skills, agents and tooling review.
+- `supervise` — supervision of another agent’s orchestrated run.
+
+The orchestrators and `supervise` are intended for sandboxed environments only.
+Read each skill’s Requirements before invoking it: they require authenticated
+GitHub access, coordination issues and a Project board. `supervise` also uses
+`.prompts/` and launches managers with permission-bypass flags.
+
 ## Repository Layout
 
 - `plugins/` contains Codex CLI plugin-owned assets, grouped by owner or
