@@ -40,7 +40,7 @@ def test_marketplace_points_to_valid_plugin_manifest() -> None:
 
     manifest = load_json(plugin_root / ".codex-plugin/plugin.json")
     assert manifest["name"] == entry["name"]
-    assert manifest["version"] == "2.0.21"
+    assert manifest["version"] == "2.0.22"
     assert manifest["description"]
 
 
@@ -79,6 +79,11 @@ def test_all_plugin_skills_have_metadata() -> None:
     skill_root = REPO_ROOT / "plugins/v8ch/skills"
     skill_files = sorted(skill_root.glob("*/SKILL.md"))
     assert {path.parent.name for path in skill_files} == {
+        "agent-tooling-review",
+        "change-set-orchestrate",
+        "chore-orchestrate",
+        "feature-orchestrate",
+        "supervise",
         "consensus-review",
         "post-merge-review",
         "recommend",
